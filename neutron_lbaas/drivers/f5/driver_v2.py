@@ -13,8 +13,8 @@
 # limitations under the License.
 #
 
+from f5lbaasdriver.v2.bigip.plugin_driver import F5DriverV2Impl
 import f5lbaasdriver
-
 from oslo_log import log as logging
 
 from neutron_lbaas.drivers import driver_base
@@ -44,12 +44,18 @@ class F5PluginV2(driver_base.LoadBalancerBaseDriver):
             LOG.debug(msg)
             raise UndefinedEnvironment(msg)
 
-        LOG.debug("F5PluginDriver: initializing, version=%s, impl=%s, env=%s"
+        LOG.debug("F5PluginV2: initializing, version=%s, impl=%s, env=%s"
                   % (VERSION, f5lbaasdriver.__version__, env))
 
-        self.impl =  f5lbaasdriver.v2.bigip.plugin_driver.F5DriverV2(
-            self, self.plugin.db._core_plugin, env)
+	self.impl =  F5DriverV2Impl(self, env)
 
+class F5PluginV2Test(F5PluginV2):
+
+    def __init__(self, plugin, env='Test'):
+        super(F5PluginV2Test, self).__init__(plugin, env)
+
+        LOG.debug("F5PluginV2Test: initializing, version=%s, impl=%s, env=%s"
+                  % (VERSION, f5lbaasdriver.__version__, env))
 
 class LoadBalancerManager(driver_base.BaseLoadBalancerManager):
 
