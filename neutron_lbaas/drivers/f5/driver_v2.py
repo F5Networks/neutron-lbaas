@@ -13,8 +13,9 @@
 # limitations under the License.
 #
 
-from f5lbaasdriver.v2.bigip.plugin_driver import F5DriverV2Impl
 import f5lbaasdriver
+from f5lbaasdriver.v2.bigip.driver_v2 import F5DriverV2
+
 from oslo_log import log as logging
 
 from neutron_lbaas.drivers import driver_base
@@ -22,13 +23,15 @@ from neutron_lbaas.drivers import driver_base
 VERSION = "0.1.1"
 LOG = logging.getLogger(__name__)
 
+
 class UndefinedEnvironment(Exception):
     pass
 
-class F5PluginV2(driver_base.LoadBalancerBaseDriver):
+
+class F5LBaaSV2Driver(driver_base.LoadBalancerBaseDriver):
 
     def __init__(self, plugin, env=None):
-        super(F5PluginV2, self).__init__(plugin)
+        super(F5LBaaSV2Driver, self).__init__(plugin)
 
         self.load_balancer = LoadBalancerManager(self)
         self.listener = ListenerManager(self)
@@ -37,88 +40,91 @@ class F5PluginV2(driver_base.LoadBalancerBaseDriver):
         self.health_monitor = HealthMonitorManager(self)
 
         if not env:
-            msg = "F5PluginDriver cannot be intialized because the environment"\
+            msg = "F5LBaaSV2Driver cannot be intialized because the environment"\
                 " is not defined. To set the environment, edit "\
                 "neutron_lbaas.conf and append the environment name to the "\
                 "service_provider class name."
             LOG.debug(msg)
             raise UndefinedEnvironment(msg)
 
-        LOG.debug("F5PluginV2: initializing, version=%s, impl=%s, env=%s"
+        LOG.debug("F5LBaaSV2Driver: initializing, version=%s, impl=%s, env=%s"
                   % (VERSION, f5lbaasdriver.__version__, env))
 
-	self.impl =  F5DriverV2Impl(self, env)
+        self.f5 = F5DriverV2(plugin, env)
 
-class F5PluginV2Test(F5PluginV2):
+
+class F5LBaaSV2DriverTest(F5LBaaSV2Driver):
 
     def __init__(self, plugin, env='Test'):
-        super(F5PluginV2Test, self).__init__(plugin, env)
+        super(F5LBaaSV2DriverTest, self).__init__(plugin, env)
 
-        LOG.debug("F5PluginV2Test: initializing, version=%s, impl=%s, env=%s"
-                  % (VERSION, f5lbaasdriver.__version__, env))
+        LOG.debug(
+            "F5LBaaSV2DriverTest: initializing, version=%s, f5=%s, env=%s"
+            % (VERSION, f5lbaasdriver.__version__, env))
+
 
 class LoadBalancerManager(driver_base.BaseLoadBalancerManager):
 
-    def create(self, context, load_balancer):
-        self.driver.impl.lb_create(context, load_balancer)
+    def create(self, context, lb):
+        self.driver.f5.loadbalancer.create(context, lb)
 
-    def update(self, context, old_load_balancer, load_balancer):
-        self.driver.impl.lb_update(context, old_load_balancer, load_balancer)
+    def update(self, context, old_lb, lb):
+        self.driver.f5.loadbalancer.update(context, old_lb, lb)
 
-    def delete(self, context, load_balancer):
-        self.driver.impl.lb_delete(context, load_balancer)
+    def delete(self, context, lb):
+        self.driver.f5.loadbalancer.delete(context, lb)
 
-    def refresh(self, context, load_balancer):
-        self.driver.impl.lb_refresh(context, load_balancer)
+    def refresh(self, context, lb):
+        self.driver.f5.loadbalancer.refresh(context, lb)
 
-    def stats(self, context, load_balancer):
-        return self.driver.impl.lb_stats(context, load_balancer)
+    def stats(self, context, lb):
+        return self.driver.f5.loadbalancer.stats(context, lb)
 
 
 class ListenerManager(driver_base.BaseListenerManager):
 
     def create(self, context, listener):
-        self.driver.impl.listener_create(context, listener)
+        self.driver.f5.listener.create(context, listener)
 
     def update(self, context, old_listener, listener):
-        self.driver.impl.listener_update(context, old_listener, listener)
+        self.driver.f5.listener.update(context, old_listener, listener)
 
     def delete(self, context, listener):
-        self.driver.impl.listener_delete(context, listener)
+        self.driver.f5.listener.delete(context, listener)
 
 
 class PoolManager(driver_base.BasePoolManager):
 
     def create(self, context, pool):
-        self.driver.impl.pool_create(context, pool)
+        self.driver.f5.pool.create(context, pool)
 
     def update(self, context, old_pool, pool):
-        self.driver.impl.pool_update(context, old_pool, pool)
+        self.driver.f5.pool.update(context, old_pool, pool)
 
     def delete(self, context, pool):
-        self.driver.impl.pool_delete(context, pool)
+        self.driver.f5.pool.delete(context, pool)
 
 
 class MemberManager(driver_base.BaseMemberManager):
 
     def create(self, context, member):
-        self.driver.impl.member_create(context, member)
+        self.driver.f5.member.create(context, member)
 
     def update(self, context, old_member, member):
-        self.driver.impl.member_update(context, old_member, member)
+        self.driver.f5.member.update(context, old_member, member)
 
     def delete(self, context, member):
-        self.driver.impl.member_delete(context, member)
+        self.driver.f5.member.delete(context, member)
 
 
 class HealthMonitorManager(driver_base.BaseHealthMonitorManager):
 
     def create(self, context, health_monitor):
-        self.driver.impl.healthmonitor_create(context, health_monitor)
+        self.driver.f5.healthmonitor.create(context, health_monitor)
 
     def update(self, context, old_health_monitor, health_monitor):
-        self.driver.impl.healthmonitor_update(context, old_health_monitor,
+        self.driver.f5.healthmonitor.update(context, old_health_monitor,
                                    health_monitor)
 
     def delete(self, context, health_monitor):
-        self.driver.impl.healthmonitor_delete(context, health_monitor)
+        self.driver.f5.healthmonitor.delete(context, health_monitor)
