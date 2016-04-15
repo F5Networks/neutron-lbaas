@@ -30,7 +30,7 @@ class UndefinedEnvironment(Exception):
 
 class F5LBaaSV2Driver(driver_base.LoadBalancerBaseDriver):
 
-    def __init__(self, plugin, env=None):
+    def __init__(self, plugin, env='Project'):
         super(F5LBaaSV2Driver, self).__init__(plugin)
 
         self.load_balancer = LoadBalancerManager(self)
