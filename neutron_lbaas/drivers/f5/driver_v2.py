@@ -62,6 +62,15 @@ class F5LBaaSV2DriverTest(F5LBaaSV2Driver):
             "F5LBaaSV2DriverTest: initializing, version=%s, f5=%s, env=%s"
             % (VERSION, f5lbaasdriver.__version__, env))
 
+class F5LBaaSV2DriverProject(F5LBaaSV2Driver):
+
+    def __init__(self, plugin, env='Project'):
+        super(F5LBaaSV2DriverProject, self).__init__(plugin, env)
+
+        LOG.debug(
+            "F5LBaaSV2DriverProject: initializing, version=%s, f5=%s, env=%s"
+            % (VERSION, f5lbaasdriver.__version__, env))
+
 
 class LoadBalancerManager(driver_base.BaseLoadBalancerManager):
 
