@@ -13,14 +13,14 @@
 #    WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
 #    License for the specific language governing permissions and limitations
 #    under the License.
-
+import ssl
 import select
 import shlex
 import socket
 import subprocess
 import tempfile
 import time
-
+from tempest.lib.common import ssh
 from oslo_log import log as logging
 import six
 from six.moves import http_cookiejar
@@ -29,11 +29,11 @@ from six.moves.urllib import request as urllib2
 from tempest.common import waiters
 from tempest import config
 from tempest import exceptions
-from tempest.lib.common import ssh
 from tempest.lib import exceptions as lib_exc
 from tempest.scenario import manager
-
 from tempest import test
+from tempest.lib.common.utils import test_utils
+import requests
 
 from neutron_lbaas._i18n import _
 from neutron_lbaas.tests.tempest.v2.clients import health_monitors_client
@@ -72,7 +72,6 @@ class BaseTestCase(manager.NetworkScenarioTest):
 
     def setUp(self):
         super(BaseTestCase, self).setUp()
-
         self.servers_keypairs = {}
         self.servers = {}
         self.members = []
@@ -110,7 +109,7 @@ class BaseTestCase(manager.NetworkScenarioTest):
             msg = 'LBaaS Extension is not enabled'
             raise cls.skipException(msg)
         if not (cfg.project_networks_reachable or cfg.public_network_id):
-            msg = ('Either project_networks_reachable must be "true", or '
+            msg = ('Either tenant_networks_reachable must be "true", or '
                    'public_network_id must be defined.')
             raise cls.skipException(msg)
 
@@ -127,8 +126,10 @@ class BaseTestCase(manager.NetworkScenarioTest):
             tenant_net = None
 
         if tenant_net:
-            tenant_subnet = self._list_subnets(tenant_id=self.tenant_id)[0]
-            self.subnet = tenant_subnet['subnet']
+            self.subnet = self._list_subnets(tenant_id=self.tenant_id)[0]
+            self.addCleanup(test_utils.call_and_ignore_notfound_exc,
+                            self.networks_client.delete_network,
+                            self.subnet['id'])
             self.network = tenant_net
         else:
             self.network = self._get_network_by_name(
@@ -137,7 +138,8 @@ class BaseTestCase(manager.NetworkScenarioTest):
             # with the fixed network is the one we want.  In the future, we
             # should instead pull a subnet id from config, which is set by
             # devstack/admin/etc.
-            self.subnet = self._list_subnets(network_id=self.network['id'])[0]
+            subnet = self._list_subnets(network_id=self.network['id'])[0]
+            self.subnet = subnet
 
     def _create_security_group_for_test(self):
         self.security_group = self._create_security_group(
@@ -192,8 +194,8 @@ class BaseTestCase(manager.NetworkScenarioTest):
             floating_ip = self.create_floating_ip(
                 server, public_network_id)
             self.check_floating_ip_status(floating_ip, "ACTIVE")
-            self.floating_ips[floating_ip] = server
-            self.server_ips[server['id']] = floating_ip.floating_ip_address
+            self.floating_ips[floating_ip['id']] = server
+            self.server_ips[server['id']] = floating_ip['floating_ip_address']
         else:
             self.server_ips[server['id']] =\
                 server['addresses'][net_name][0]['addr']
@@ -233,17 +235,13 @@ class BaseTestCase(manager.NetworkScenarioTest):
         """
         LOG.info(('self.server_ips looks like this: {0}'.format(
             self.server_ips)))
-
         for server_id, ip in six.iteritems(self.server_ips):
-
             LOG.info(('processing server_id {0}  ip: {1}'.format(
                 server_id, ip)))
-
             private_key = self.servers_keypairs[server_id]['private_key']
             server = self.servers_client.show_server(server_id)['server']
             server_name = server['name']
             username = config.validation.image_ssh_user
-
             self.ssh_client = ssh.Client(host=ip, username=username,
                                          pkey=private_key)
             self.ssh_client.test_connection_auth()
@@ -265,6 +263,7 @@ class BaseTestCase(manager.NetworkScenarioTest):
                                            "/tmp/script1",
                                            ip,
                                            username, key.name)
+
             # Start netcat
             start_server = ('while true; do '
                             'sudo nc -ll -p %(port)s -e sh /tmp/%(script)s; '
@@ -272,8 +271,6 @@ class BaseTestCase(manager.NetworkScenarioTest):
             cmd = start_server % {'port': self.port1,
                                   'script': 'script1'}
             self.exec_command(cmd)
-            LOG.info(('Executing cmd on server {0} ip {1}: {2}'.format(
-                server_id, ip, cmd)))
 
             if len(self.server_ips) == 1:
                 with tempfile.NamedTemporaryFile() as script:
@@ -332,23 +329,27 @@ class BaseTestCase(manager.NetworkScenarioTest):
         return self.pool
 
     def _cleanup_load_balancer(self, load_balancer_id):
-        self.delete_wrapper(self.load_balancers_client.delete_load_balancer,
-                            load_balancer_id)
+        test_utils.call_and_ignore_notfound_exc(
+            self.load_balancers_client.delete_load_balancer, load_balancer_id)
+#        self.delete_wrapper(self.load_balancers_client.delete_load_balancer,
+#                            load_balancer_id)
         self._wait_for_load_balancer_status(load_balancer_id, delete=True)
 
     def _cleanup_listener(self, listener_id, load_balancer_id=None):
-        self.delete_wrapper(self.listeners_client.delete_listener, listener_id)
+        test_utils.call_and_ignore_notfound_exc(
+            self.listeners_client.delete_listener, listener_id)
         if load_balancer_id:
             self._wait_for_load_balancer_status(load_balancer_id)
 
     def _cleanup_pool(self, pool_id, load_balancer_id=None):
-        self.delete_wrapper(self.pools_client.delete_pool, pool_id)
+        test_utils.call_and_ignore_notfound_exc(
+            self.pools_client.delete_pool, pool_id)
         if load_balancer_id:
             self._wait_for_load_balancer_status(load_balancer_id)
 
     def _cleanup_health_monitor(self, hm_id, load_balancer_id=None):
-        self.delete_wrapper(self.health_monitors_client.delete_health_monitor,
-                            hm_id)
+        test_utils.call_and_ignore_notfound_exc(
+            self.health_monitors_client.delete_health_monitor, hm_id)
         if load_balancer_id:
             self._wait_for_load_balancer_status(load_balancer_id)
 
@@ -386,11 +387,11 @@ class BaseTestCase(manager.NetworkScenarioTest):
 
     def _assign_floating_ip_to_lb_vip(self, lb):
         public_network_id = config.network.public_network_id
-        port_id = lb.vip_port_id
+        port_id = lb['vip_port_id']
         floating_ip = self.create_floating_ip(lb, public_network_id,
                                               port_id=port_id)
-        self.floating_ips.setdefault(lb.id, [])
-        self.floating_ips[lb.id].append(floating_ip)
+        self.floating_ips.setdefault(lb['id'], [])
+        self.floating_ips[lb['id']].append(floating_ip)
         # Check for floating ip status before you check load-balancer
         self.check_floating_ip_status(floating_ip, "ACTIVE")
 
@@ -429,10 +430,10 @@ class BaseTestCase(manager.NetworkScenarioTest):
         # tempest.conf file
         if ip_version == 4:
             if (config.network.public_network_id and not
-                    config.network.project_networks_reachable):
+                        config.network.project_networks_reachable):
                 self._assign_floating_ip_to_lb_vip(self.load_balancer)
                 self.vip_ip = self.floating_ips[
-                    self.load_balancer.id][0]['floating_ip_address']
+                    self.load_balancer['id']][0]['floating_ip_address']
 
         # Currently the ovs-agent is not enforcing security groups on the
         # vip port - see https://bugs.launchpad.net/neutron/+bug/1163569
@@ -440,7 +441,7 @@ class BaseTestCase(manager.NetworkScenarioTest):
         # security group with a rule that allows tcp port 80 to the vip port.
         self.ports_client.update_port(
             self.load_balancer.get('vip_port_id'),
-            security_groups=[self.security_group.id])
+            security_groups=[self.security_group['id']])
 
     def _wait_for_load_balancer_status(self, load_balancer_id,
                                        provisioning_status='ACTIVE',
@@ -505,11 +506,11 @@ class BaseTestCase(manager.NetworkScenarioTest):
                   type=sp_type))
 
     def _check_load_balancing(self, protocol='http', port=80):
-        """Check Load Balancing between 2 servers
-
+        """
         1. Send NUM requests on the floating ip associated with the VIP
         2. Check that the requests are shared between the two servers
         """
+
         self._check_connection(check_ip=self.vip_ip,
                                protocol=protocol,
                                port=port)
@@ -520,24 +521,36 @@ class BaseTestCase(manager.NetworkScenarioTest):
             self.assertGreater(counter, 0, 'Member %s never balanced' % member)
 
     def _check_connection(self, check_ip, protocol='http', port=80):
-        """Checks connection of the back end servers"""
+        #ssl.PROTOCOL_SSLv23 = ssl.PROTOCOL_TLSv1
+        #context = ssl._create_unverified_context
+        #default_context = ssl._create_default_https_context
+
         def try_connect(check_ip, protocol, port):
+            requests.packages.urllib3.disable_warnings()
+            #print check_ip
+            #url = "{0}://{1}:{2}/".format(protocol, check_ip, port)
             try:
+                #resp = requests.get("{0}://{1}:{2}/".format(protocol,
+                #                                            check_ip,
+                #                                            port), auth=('cirros','cubswin:)'))
+
                 resp = urllib2.urlopen("{0}://{1}:{2}/".format(protocol,
-                                                               check_ip,
-                                                               port))
-                if resp.getcode() == 200:
+                                                            check_ip,
+                                                            port))
+                print resp.status_code
+                if resp.status_code == 200 :
                     return True
                 return False
             except IOError:
                 return False
             except error.HTTPError:
                 return False
+
         timeout = config.validation.ping_timeout
         start = time.time()
         while not try_connect(check_ip, protocol, port):
             if (time.time() - start) > timeout:
-                message = "Timed out trying to connect to %s" % check_ip
+                message = "Timed out trying to connect to %s " %check_ip
                 raise exceptions.TimeoutException(message)
 
     def _send_requests(self, vip_ip, servers, protocol='http'):
@@ -565,7 +578,6 @@ class BaseTestCase(manager.NetworkScenarioTest):
 
     def _check_load_balancing_after_deleting_resources(self):
         """Check that the requests are not sent to any servers
-
         Assert that no traffic is sent to any servers
         """
         counters = self._send_requests(self.vip_ip, ["server1", "server2"])
@@ -716,4 +728,3 @@ class BaseTestCase(manager.NetworkScenarioTest):
                     command=cmd, exit_status=exit_status,
                     stderr=err_data, stdout=out_data)
             return out_data
-

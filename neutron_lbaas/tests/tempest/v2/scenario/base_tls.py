@@ -20,7 +20,7 @@ from keystoneclient.v2_0 import client as v2_client
 from keystoneclient.v3 import client as v3_client
 from oslo_log import log as logging
 from tempest import config
-
+from keystoneauth1 import identity
 from neutron_lbaas.tests.tempest.v2.common import barbican_helper
 from neutron_lbaas.tests.tempest.v2.scenario import base
 
@@ -36,7 +36,7 @@ class BaseTestCaseTLS(base.BaseTestCase):
         client_kwargs = {
             'username': config.auth.admin_username,
             'password': config.auth.admin_password,
-            'tenant_name': config.auth.admin_tenant_name,
+            'tenant_name': config.auth.admin_project_name,
             'auth_url': config.identity.uri
         }
         if config.identity.auth_version.lower() == 'v2':
@@ -49,9 +49,12 @@ class BaseTestCaseTLS(base.BaseTestCase):
         keystone_session = session.Session(auth=self.keystone_client)
 
         # TODO(): Keystone should load service endpoint...
-        self.temp_barbican_endpoint = 'http://localhost:9311'
-        self.barbican_client = barbican_client.Client(
-            session=keystone_session, endpoint=self.temp_barbican_endpoint)
+        self.auth = identity.v2.Password(**client_kwargs)
+
+        # create a Keystone session using the auth plugin we just created
+        keystone_session = session.Session(auth=self.auth)
+
+        self.barbican_client = barbican_client.Client(session=keystone_session)
 
         self.barbican_helper = barbican_helper.BarbicanTestHelper(
             self.barbican_client)
