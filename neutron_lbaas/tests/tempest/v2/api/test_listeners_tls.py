@@ -23,7 +23,6 @@ from tempest.lib.common.utils import data_utils
 from tempest.lib import decorators
 from tempest.lib import exceptions as ex
 from tempest import test
-
 from neutron_lbaas.tests.tempest.v2.api import base
 from neutron_lbaas.tests.tempest.v2.common import barbican_helper
 

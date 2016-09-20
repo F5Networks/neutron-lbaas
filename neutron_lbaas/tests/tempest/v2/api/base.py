@@ -1,4 +1,5 @@
-# Copyright 2015 Rackspace
+# Copyright 2015, 2016 Rackspace Inc.
+# All Rights Reserved.
 #
 #    Licensed under the Apache License, Version 2.0 (the "License"); you may
 #    not use this file except in compliance with the License. You may obtain
@@ -12,29 +13,47 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 
-import os
 import time
 
 from oslo_log import log as logging
-from tempest_lib import exceptions
+from tempest.api.network import base
+from tempest import config
+from tempest.lib.common.utils import test_utils
+from tempest.lib import exceptions
 
 from neutron_lbaas._i18n import _, _LI
-from neutron_lbaas.tests.tempest.lib import config
-from neutron_lbaas.tests.tempest.v1.api import base
 from neutron_lbaas.tests.tempest.v2.clients import health_monitors_client
 from neutron_lbaas.tests.tempest.v2.clients import listeners_client
 from neutron_lbaas.tests.tempest.v2.clients import load_balancers_client
 from neutron_lbaas.tests.tempest.v2.clients import members_client
 from neutron_lbaas.tests.tempest.v2.clients import pools_client
+import time
 
 CONF = config.CONF
 
 LOG = logging.getLogger(__name__)
 
-# Use local tempest conf if one is available.
-# This usually means we're running tests outside of devstack
-if os.path.exists('./tests/tempest/etc/dev_tempest.conf'):
-    CONF.set_config_path('./tests/tempest/etc/dev_tempest.conf')
+
+def _setup_client_args(auth_provider):
+    """Set up ServiceClient arguments using config settings. """
+    service = CONF.network.catalog_type or 'network'
+    region = CONF.network.region or 'regionOne'
+    endpoint_type = CONF.network.endpoint_type
+    build_interval = CONF.network.build_interval
+    build_timeout = CONF.network.build_timeout
+
+    # The disable_ssl appears in identity
+    disable_ssl_certificate_validation = (
+        CONF.identity.disable_ssl_certificate_validation)
+    ca_certs = None
+
+    # Trace in debug section
+    trace_requests = CONF.debug.trace_requests
+
+    return [auth_provider, service, region, endpoint_type,
+            build_interval, build_timeout,
+            disable_ssl_certificate_validation, ca_certs,
+            trace_requests]
 
 
 class BaseTestCase(base.BaseNetworkTest):
@@ -47,12 +66,9 @@ class BaseTestCase(base.BaseNetworkTest):
     def resource_setup(cls):
         super(BaseTestCase, cls).resource_setup()
 
-        # credentials = cls.isolated_creds.get_primary_creds()
-        # mgr = tempest_clients.Manager(credentials=credentials)
         mgr = cls.get_client_manager()
-        # auth_provider = mgr.get_auth_provider(credentials)
         auth_provider = mgr.auth_provider
-        client_args = [auth_provider, 'network', 'regionOne']
+        client_args = _setup_client_args(auth_provider)
 
         cls.load_balancers_client = (
             load_balancers_client.LoadBalancersClientJSON(*client_args))
@@ -76,23 +92,33 @@ class BaseTestCase(base.BaseNetworkTest):
                 for pool in listener.get('pools'):
                     hm = pool.get('healthmonitor')
                     if hm:
-                        cls._try_delete_resource(
+                        test_utils.call_and_ignore_notfound_exc(
                             cls.health_monitors_client.delete_health_monitor,
                             pool.get('healthmonitor').get('id'))
                         cls._wait_for_load_balancer_status(lb_id)
-                    cls._try_delete_resource(cls.pools_client.delete_pool,
-                                             pool.get('id'))
+                    test_utils.call_and_ignore_notfound_exc(
+                        cls.pools_client.delete_pool,
+                        pool.get('id'))
                     cls._wait_for_load_balancer_status(lb_id)
-                    health_monitor = pool.get('healthmonitor')
-                    if health_monitor:
-                        cls._try_delete_resource(
-                            cls.health_monitors_client.delete_health_monitor,
-                            health_monitor.get('id'))
+                    # delete pool's members
+                    members = pool.get('members', [])
+                    for member in members:
+                        test_utils.call_and_ignore_notfound_exc(
+                            cls.members_client.delete_member,
+                            pool.get('id'), member.get('id'))
+                        cls._wait_for_load_balancer_status(lb_id)
+                    # delete pool
+                    test_utils.call_and_ignore_notfound_exc(
+                        cls.pools_client.delete_pool, pool.get('id'))
                     cls._wait_for_load_balancer_status(lb_id)
-                cls._try_delete_resource(cls.listeners_client.delete_listener,
-                                         listener.get('id'))
+                # delete listener
+                test_utils.call_and_ignore_notfound_exc(
+                    cls.listeners_client.delete_listener,
+                    listener.get('id'))
                 cls._wait_for_load_balancer_status(lb_id)
-            cls._try_delete_resource(cls._delete_load_balancer, lb_id)
+            # delete load-balancer
+            test_utils.call_and_ignore_notfound_exc(
+                cls._delete_load_balancer, lb_id)
 
         super(BaseTestCase, cls).resource_cleanup()
 
@@ -116,7 +142,7 @@ class BaseTestCase(base.BaseNetworkTest):
             cls._wait_for_load_balancer_status(lb.get('id'))
 
         cls._lbs_to_delete.append(lb.get('id'))
-        port = cls.client.show_port(lb['vip_port_id'])
+        port = cls.ports_client.show_port(lb['vip_port_id'])
         cls.ports.append(port['port'])
         return lb
 
@@ -344,16 +370,9 @@ class BaseAdminTestCase(BaseTestCase):
 
         super(BaseAdminTestCase, cls).resource_setup()
 
-        # credentials = cls.isolated_creds.get_primary_creds()
-        # mgr = tempest_clients.Manager(credentials=credentials)
         mgr = cls.get_client_manager(credential_type='admin')
-        # auth_provider = mgr.get_auth_provider(credentials)
         auth_provider_admin = mgr.auth_provider
-
-        # credentials_admin = cls.isolated_creds.get_admin_creds()
-        # mgr_admin = tempest_clients.Manager(credentials=credentials_admin)
-        # auth_provider_admin = mgr_admin.get_auth_provider(credentials_admin)
-        client_args = [auth_provider_admin, 'network', 'regionOne']
+        client_args = _setup_client_args(auth_provider_admin)
 
         cls.load_balancers_client = (
             load_balancers_client.LoadBalancersClientJSON(*client_args))

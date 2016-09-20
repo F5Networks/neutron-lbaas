@@ -1,4 +1,5 @@
-# Copyright 2015 Hewlett-Packard Development Company, L.P.
+# Copyright 2015-2016 Hewlett-Packard Development Company, L.P.
+# Copyright 2016 Rackspace Inc.
 # All Rights Reserved.
 #
 #    Licensed under the Apache License, Version 2.0 (the "License"); you may
@@ -12,30 +13,59 @@
 #    WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
 #    License for the specific language governing permissions and limitations
 #    under the License.
-
+import ssl
+import select
+import shlex
 import socket
+import subprocess
 import tempfile
 import time
-
+from tempest.lib.common import ssh
+from oslo_log import log as logging
 import six
+from six.moves import http_cookiejar
 from six.moves.urllib import error
 from six.moves.urllib import request as urllib2
-from tempest_lib import exceptions as lib_exc
+from tempest.common import waiters
+from tempest import config
+from tempest import exceptions
+from tempest.lib import exceptions as lib_exc
+from tempest.scenario import manager
+from tempest import test
+from tempest.lib.common.utils import test_utils
+import requests
 
-from neutron_lbaas.tests.tempest.lib.common import commands
-from neutron_lbaas.tests.tempest.lib import config
-from neutron_lbaas.tests.tempest.lib import exceptions
-from neutron_lbaas.tests.tempest.lib.services.network import resources as \
-    net_resources
-from neutron_lbaas.tests.tempest.lib import test
+from neutron_lbaas._i18n import _
 from neutron_lbaas.tests.tempest.v2.clients import health_monitors_client
 from neutron_lbaas.tests.tempest.v2.clients import listeners_client
 from neutron_lbaas.tests.tempest.v2.clients import load_balancers_client
 from neutron_lbaas.tests.tempest.v2.clients import members_client
 from neutron_lbaas.tests.tempest.v2.clients import pools_client
-from neutron_lbaas.tests.tempest.v2.scenario import manager
 
 config = config.CONF
+
+LOG = logging.getLogger(__name__)
+
+
+def _setup_config_args(auth_provider):
+    """Set up ServiceClient arguments using config settings. """
+    service = config.network.catalog_type
+    region = config.network.region or config.identity.region
+    endpoint_type = config.network.endpoint_type
+    build_interval = config.network.build_interval
+    build_timeout = config.network.build_timeout
+
+    # The disable_ssl appears in identity
+    disable_ssl_certificate_validation = (
+        config.identity.disable_ssl_certificate_validation)
+    ca_certs = None
+
+    # Trace in debug section
+    trace_requests = config.debug.trace_requests
+
+    return [auth_provider, service, region, endpoint_type, build_interval,
+            build_timeout, disable_ssl_certificate_validation, ca_certs,
+            trace_requests]
 
 
 class BaseTestCase(manager.NetworkScenarioTest):
@@ -51,7 +81,6 @@ class BaseTestCase(manager.NetworkScenarioTest):
         self.port1 = 80
         self.port2 = 88
         self.num = 50
-        self.server_ips = {}
         self.server_fixed_ips = {}
 
         self._create_security_group_for_test()
@@ -59,7 +88,7 @@ class BaseTestCase(manager.NetworkScenarioTest):
 
         mgr = self.get_client_manager()
         auth_provider = mgr.auth_provider
-        self.client_args = [auth_provider, 'network', 'regionOne']
+        self.client_args = _setup_config_args(auth_provider)
 
         self.load_balancers_client = (
             load_balancers_client.LoadBalancersClientJSON(*self.client_args))
@@ -79,7 +108,7 @@ class BaseTestCase(manager.NetworkScenarioTest):
         if not test.is_extension_enabled('lbaasv2', 'network'):
             msg = 'LBaaS Extension is not enabled'
             raise cls.skipException(msg)
-        if not (cfg.tenant_networks_reachable or cfg.public_network_id):
+        if not (cfg.project_networks_reachable or cfg.public_network_id):
             msg = ('Either tenant_networks_reachable must be "true", or '
                    'public_network_id must be defined.')
             raise cls.skipException(msg)
@@ -97,10 +126,10 @@ class BaseTestCase(manager.NetworkScenarioTest):
             tenant_net = None
 
         if tenant_net:
-            tenant_subnet = self._list_subnets(tenant_id=self.tenant_id)[0]
-            self.subnet = net_resources.DeletableSubnet(
-                client=self.network_client,
-                **tenant_subnet)
+            self.subnet = self._list_subnets(tenant_id=self.tenant_id)[0]
+            self.addCleanup(test_utils.call_and_ignore_notfound_exc,
+                            self.networks_client.delete_network,
+                            self.subnet['id'])
             self.network = tenant_net
         else:
             self.network = self._get_network_by_name(
@@ -110,7 +139,7 @@ class BaseTestCase(manager.NetworkScenarioTest):
             # should instead pull a subnet id from config, which is set by
             # devstack/admin/etc.
             subnet = self._list_subnets(network_id=self.network['id'])[0]
-            self.subnet = net_resources.AttributeDict(subnet)
+            self.subnet = subnet
 
     def _create_security_group_for_test(self):
         self.security_group = self._create_security_group(
@@ -150,17 +179,23 @@ class BaseTestCase(manager.NetworkScenarioTest):
             ],
             'key_name': keypair['name'],
             'security_groups': security_groups,
+            'name': name
         }
         net_name = self.network['name']
-        server = self.create_server(name=name, create_kwargs=create_kwargs)
+        server = self.create_server(**create_kwargs)
+        waiters.wait_for_server_status(self.servers_client,
+                                       server['id'], 'ACTIVE')
+        server = self.servers_client.show_server(server['id'])
+        server = server['server']
         self.servers_keypairs[server['id']] = keypair
         if (config.network.public_network_id and not
-                config.network.tenant_networks_reachable):
+                config.network.project_networks_reachable):
             public_network_id = config.network.public_network_id
             floating_ip = self.create_floating_ip(
                 server, public_network_id)
-            self.floating_ips[floating_ip] = server
-            self.server_ips[server['id']] = floating_ip.floating_ip_address
+            self.check_floating_ip_status(floating_ip, "ACTIVE")
+            self.floating_ips[floating_ip['id']] = server
+            self.server_ips[server['id']] = floating_ip['floating_ip_address']
         else:
             self.server_ips[server['id']] =\
                 server['addresses'][net_name][0]['addr']
@@ -181,14 +216,16 @@ class BaseTestCase(manager.NetworkScenarioTest):
     def _stop_server(self):
         for name, value in six.iteritems(self.servers):
             if name == 'primary':
-                self.servers_client.stop(value)
-                self.servers_client.wait_for_server_status(value, 'SHUTOFF')
+                self.servers_client.stop_server(value)
+                waiters.wait_for_server_status(self.servers_client,
+                                               value, 'SHUTOFF')
 
     def _start_server(self):
         for name, value in six.iteritems(self.servers):
             if name == 'primary':
                 self.servers_client.start(value)
-                self.servers_client.wait_for_server_status(value, 'ACTIVE')
+                waiters.wait_for_server_status(self.servers_client,
+                                               value, 'ACTIVE')
 
     def _start_servers(self):
         """
@@ -196,29 +233,36 @@ class BaseTestCase(manager.NetworkScenarioTest):
         1. SSH to the instance
         2. Start two http backends listening on ports 80 and 88 respectively
         """
+        LOG.info(('self.server_ips looks like this: {0}'.format(
+            self.server_ips)))
         for server_id, ip in six.iteritems(self.server_ips):
+            LOG.info(('processing server_id {0}  ip: {1}'.format(
+                server_id, ip)))
             private_key = self.servers_keypairs[server_id]['private_key']
-            server_name = self.servers_client.get_server(server_id)['name']
-            username = config.scenario.ssh_user
-            ssh_client = self.get_remote_client(
-                server_or_ip=ip,
-                private_key=private_key)
+            server = self.servers_client.show_server(server_id)['server']
+            server_name = server['name']
+            username = config.validation.image_ssh_user
+            self.ssh_client = ssh.Client(host=ip, username=username,
+                                         pkey=private_key)
+            self.ssh_client.test_connection_auth()
 
             # Write a backend's response into a file
             resp = ('echo -ne "HTTP/1.1 200 OK\r\nContent-Length: 7\r\n'
-                    'Connection: close\r\nContent-Type: text/html; '
-                    'charset=UTF-8\r\n\r\n%s"; cat >/dev/null')
+                    'Set-Cookie:JSESSIONID=%(s_id)s\r\nConnection: close\r\n'
+                    'Content-Type: text/html; '
+                    'charset=UTF-8\r\n\r\n%(server)s"; cat >/dev/null')
 
             with tempfile.NamedTemporaryFile() as script:
-                script.write(resp % server_name)
+                script.write(resp % {'s_id': server_name[-1],
+                                     'server': server_name})
                 script.flush()
                 with tempfile.NamedTemporaryFile() as key:
                     key.write(private_key)
                     key.flush()
-                    commands.copy_file_to_host(script.name,
-                                               "/tmp/script1",
-                                               ip,
-                                               username, key.name)
+                    self.copy_file_to_host(script.name,
+                                           "/tmp/script1",
+                                           ip,
+                                           username, key.name)
 
             # Start netcat
             start_server = ('while true; do '
@@ -226,34 +270,37 @@ class BaseTestCase(manager.NetworkScenarioTest):
                             'done > /dev/null &')
             cmd = start_server % {'port': self.port1,
                                   'script': 'script1'}
-            ssh_client.exec_command(cmd)
+            self.exec_command(cmd)
 
             if len(self.server_ips) == 1:
                 with tempfile.NamedTemporaryFile() as script:
-                    script.write(resp % 'server2')
+                    script.write(resp % {'s_id': 2,
+                                         'server': 'server2'})
                     script.flush()
                     with tempfile.NamedTemporaryFile() as key:
                         key.write(private_key)
                         key.flush()
-                        commands.copy_file_to_host(script.name,
-                                                   "/tmp/script2", ip,
-                                                   username, key.name)
+                        self.copy_file_to_host(script.name,
+                                               "/tmp/script2", ip,
+                                               username, key.name)
                 cmd = start_server % {'port': self.port2,
                                       'script': 'script2'}
-                ssh_client.exec_command(cmd)
+                self.exec_command(cmd)
 
-    def _create_listener(self, load_balancer_id):
-        """Create a listener with HTTP protocol listening on port 80."""
+    def _create_listener(self, load_balancer_id, default_tls_container=None,
+                         protocol='HTTP', port=80):
+        """Create a listener."""
         self.listener = self.listeners_client.create_listener(
             loadbalancer_id=load_balancer_id,
-            protocol='HTTP', protocol_port=80)
+            protocol=protocol, protocol_port=port,
+            default_tls_container_ref=default_tls_container)
         self.assertTrue(self.listener)
         self.addCleanup(self._cleanup_listener, self.listener.get('id'),
                         load_balancer_id=load_balancer_id)
         return self.listener
 
     def _create_health_monitor(self):
-        """Create a pool with ROUND_ROBIN algorithm."""
+        """Create a health monitor."""
         self.hm = self.health_monitors_client.create_health_monitor(
             type='HTTP', max_retries=5, delay=3, timeout=5,
             pool_id=self.pool['id'])
@@ -262,42 +309,53 @@ class BaseTestCase(manager.NetworkScenarioTest):
                         self.hm.get('id'),
                         load_balancer_id=self.load_balancer['id'])
 
-    def _create_pool(self, listener_id):
-        """Create a pool with ROUND_ROBIN algorithm."""
-        self.pool = self.pools_client.create_pool(
-            protocol='HTTP',
-            lb_algorithm='ROUND_ROBIN',
-            listener_id=listener_id)
+    def _create_pool(self, listener_id, protocol='HTTP',
+                     lb_algorithm='ROUND_ROBIN', persistence_type=None,
+                     cookie_name=None):
+        """Create a pool."""
+        pool = {
+            "listener_id": listener_id,
+            "lb_algorithm": lb_algorithm,
+            "protocol": protocol
+        }
+        if persistence_type:
+            pool.update({'session_persistence': {'type': persistence_type}})
+        if cookie_name:
+            pool.update({'session_persistence': {"cookie_name": cookie_name}})
+        self.pool = self.pools_client.create_pool(**pool)
         self.assertTrue(self.pool)
         self.addCleanup(self._cleanup_pool, self.pool['id'],
                         load_balancer_id=self.load_balancer['id'])
         return self.pool
 
     def _cleanup_load_balancer(self, load_balancer_id):
-        self.delete_wrapper(self.load_balancers_client.delete_load_balancer,
-                            load_balancer_id)
+        test_utils.call_and_ignore_notfound_exc(
+            self.load_balancers_client.delete_load_balancer, load_balancer_id)
+#        self.delete_wrapper(self.load_balancers_client.delete_load_balancer,
+#                            load_balancer_id)
         self._wait_for_load_balancer_status(load_balancer_id, delete=True)
 
     def _cleanup_listener(self, listener_id, load_balancer_id=None):
-        self.delete_wrapper(self.listeners_client.delete_listener, listener_id)
+        test_utils.call_and_ignore_notfound_exc(
+            self.listeners_client.delete_listener, listener_id)
         if load_balancer_id:
             self._wait_for_load_balancer_status(load_balancer_id)
 
     def _cleanup_pool(self, pool_id, load_balancer_id=None):
-        self.delete_wrapper(self.pools_client.delete_pool, pool_id)
+        test_utils.call_and_ignore_notfound_exc(
+            self.pools_client.delete_pool, pool_id)
         if load_balancer_id:
             self._wait_for_load_balancer_status(load_balancer_id)
 
     def _cleanup_health_monitor(self, hm_id, load_balancer_id=None):
-        self.delete_wrapper(self.health_monitors_client.delete_health_monitor,
-                            hm_id)
+        test_utils.call_and_ignore_notfound_exc(
+            self.health_monitors_client.delete_health_monitor, hm_id)
         if load_balancer_id:
             self._wait_for_load_balancer_status(load_balancer_id)
 
     def _create_members(self, load_balancer_id=None, pool_id=None,
                         subnet_id=None):
-        """
-        Create two members.
+        """Create two members.
 
         In case there is only one server, create both members with the same ip
         but with different ports to listen on.
@@ -329,15 +387,19 @@ class BaseTestCase(manager.NetworkScenarioTest):
 
     def _assign_floating_ip_to_lb_vip(self, lb):
         public_network_id = config.network.public_network_id
-        port_id = lb.vip_port_id
+        port_id = lb['vip_port_id']
         floating_ip = self.create_floating_ip(lb, public_network_id,
                                               port_id=port_id)
-        self.floating_ips.setdefault(lb.id, [])
-        self.floating_ips[lb.id].append(floating_ip)
+        self.floating_ips.setdefault(lb['id'], [])
+        self.floating_ips[lb['id']].append(floating_ip)
         # Check for floating ip status before you check load-balancer
         self.check_floating_ip_status(floating_ip, "ACTIVE")
 
-    def _create_load_balancer(self, ip_version=4):
+    def _create_load_balancer(self, ip_version=4, persistence_type=None,
+                              default_tls_container_ref=None,
+                              listener_protocol='HTTP',
+                              port=80,
+                              pool_protocol='HTTP'):
         self.create_lb_kwargs = {'tenant_id': self.tenant_id,
                                  'vip_subnet_id': self.subnet['id']}
         self.load_balancer = self.load_balancers_client.create_load_balancer(
@@ -346,10 +408,16 @@ class BaseTestCase(manager.NetworkScenarioTest):
         self.addCleanup(self._cleanup_load_balancer, load_balancer_id)
         self._wait_for_load_balancer_status(load_balancer_id)
 
-        listener = self._create_listener(load_balancer_id=load_balancer_id)
+        listener = self._create_listener(
+            load_balancer_id=load_balancer_id,
+            default_tls_container=default_tls_container_ref,
+            protocol=listener_protocol,
+            port=port)
         self._wait_for_load_balancer_status(load_balancer_id)
 
-        self.pool = self._create_pool(listener_id=listener.get('id'))
+        self.pool = self._create_pool(listener_id=listener.get('id'),
+                                      protocol=pool_protocol,
+                                      persistence_type=persistence_type)
         self._wait_for_load_balancer_status(load_balancer_id)
 
         self._create_members(load_balancer_id=load_balancer_id,
@@ -362,19 +430,18 @@ class BaseTestCase(manager.NetworkScenarioTest):
         # tempest.conf file
         if ip_version == 4:
             if (config.network.public_network_id and not
-                    config.network.tenant_networks_reachable):
-                load_balancer = net_resources.AttributeDict(self.load_balancer)
-                self._assign_floating_ip_to_lb_vip(load_balancer)
+                        config.network.project_networks_reachable):
+                self._assign_floating_ip_to_lb_vip(self.load_balancer)
                 self.vip_ip = self.floating_ips[
-                    load_balancer.id][0]['floating_ip_address']
+                    self.load_balancer['id']][0]['floating_ip_address']
 
         # Currently the ovs-agent is not enforcing security groups on the
         # vip port - see https://bugs.launchpad.net/neutron/+bug/1163569
         # However the linuxbridge-agent does, and it is necessary to add a
         # security group with a rule that allows tcp port 80 to the vip port.
-        self.network_client.update_port(
+        self.ports_client.update_port(
             self.load_balancer.get('vip_port_id'),
-            security_groups=[self.security_group.id])
+            security_groups=[self.security_group['id']])
 
     def _wait_for_load_balancer_status(self, load_balancer_id,
                                        provisioning_status='ACTIVE',
@@ -419,42 +486,79 @@ class BaseTestCase(manager.NetworkScenarioTest):
                       operating_status=operating_status))
         return lb
 
-    def _check_load_balancing(self):
+    def _wait_for_pool_session_persistence(self, pool_id, sp_type=None):
+        interval_time = 1
+        timeout = 10
+        end_time = time.time() + timeout
+        while time.time() < end_time:
+            pool = self.pools_client.get_pool(pool_id)
+            sp = pool.get('session_persistence', None)
+            if (not (sp_type or sp) or
+                    pool['session_persistence']['type'] == sp_type):
+                return pool
+            time.sleep(interval_time)
+        raise Exception(
+            _("Wait for pool ran for {timeout} seconds and did "
+              "not observe {pool_id} update session persistence type "
+              "to {type}.").format(
+                  timeout=timeout,
+                  pool_id=pool_id,
+                  type=sp_type))
+
+    def _check_load_balancing(self, protocol='http', port=80):
         """
         1. Send NUM requests on the floating ip associated with the VIP
         2. Check that the requests are shared between the two servers
         """
 
-        self._check_connection(self.vip_ip)
-        counters = self._send_requests(self.vip_ip, ["server1", "server2"])
+        self._check_connection(check_ip=self.vip_ip,
+                               protocol=protocol,
+                               port=port)
+        counters = self._send_requests(vip_ip=self.vip_ip,
+                                       servers=["server1", "server2"],
+                                       protocol=protocol)
         for member, counter in six.iteritems(counters):
             self.assertGreater(counter, 0, 'Member %s never balanced' % member)
 
-    def _check_connection(self, check_ip, port=80):
-        def try_connect(check_ip, port):
+    def _check_connection(self, check_ip, protocol='http', port=80):
+        #ssl.PROTOCOL_SSLv23 = ssl.PROTOCOL_TLSv1
+        #context = ssl._create_unverified_context
+        #default_context = ssl._create_default_https_context
+
+        def try_connect(check_ip, protocol, port):
+            requests.packages.urllib3.disable_warnings()
+            #print check_ip
+            url = "{0}://{1}:{2}/".format(protocol, check_ip, port)
             try:
-                resp = urllib2.urlopen("http://{0}:{1}/".format(check_ip,
-                                                                port))
-                if resp.getcode() == 200:
+                resp = requests.get("{0}://{1}:{2}/".format(protocol,
+                                                            check_ip,
+                                                            port), auth=('cirros','cubswin:)'))
+
+                #resp = urllib2.urlopen("{0}://{1}:{2}/".format(protocol,
+                #                                            check_ip,
+                #                                            port))
+                print resp.status_code
+                if resp.status_code == 200 :
                     return True
                 return False
             except IOError:
                 return False
             except error.HTTPError:
                 return False
-        timeout = config.compute.ping_timeout
+
+        timeout = config.validation.ping_timeout
         start = time.time()
-        while not try_connect(check_ip, port):
+        while not try_connect(check_ip, protocol, port):
             if (time.time() - start) > timeout:
-                message = "Timed out trying to connect to %s" % check_ip
+                message = "Timed out trying to connect to %s " %check_ip
                 raise exceptions.TimeoutException(message)
 
-    def _send_requests(self, vip_ip, servers):
+    def _send_requests(self, vip_ip, servers, protocol='http'):
         counters = dict.fromkeys(servers, 0)
         for i in range(self.num):
             try:
-                server = urllib2.urlopen("http://{0}/".format(vip_ip),
-                                         None, 2).read()
+                server = urllib2.urlopen("{0}://{1}/".format(
+                    protocol, vip_ip), None, 2).read()
                 counters[server] += 1
             # HTTP exception means fail of server, so don't increase counter
             # of success and continue connection tries
@@ -473,10 +577,154 @@ class BaseTestCase(manager.NetworkScenarioTest):
                                  'Member %s is not balanced' % member)
 
     def _check_load_balancing_after_deleting_resources(self):
-        """
-        Check that the requests are not sent to any servers
+        """Check that the requests are not sent to any servers
         Assert that no traffic is sent to any servers
         """
         counters = self._send_requests(self.vip_ip, ["server1", "server2"])
         for member, counter in six.iteritems(counters):
             self.assertEqual(counter, 0, 'Member %s is balanced' % member)
+
+    def _check_source_ip_persistence(self):
+        """Check source ip session persistence.
+
+        Verify that all requests from our ip are answered by the same server
+        that handled it the first time.
+        """
+        # Check that backends are reachable
+        self._check_connection(self.vip_ip)
+
+        resp = []
+        for count in range(10):
+            resp.append(
+                urllib2.urlopen("http://{0}/".format(self.vip_ip)).read())
+        self.assertEqual(len(set(resp)), 1)
+
+    def _update_pool_session_persistence(self, persistence_type=None,
+                                         cookie_name=None):
+        """Update a pool with new session persistence type and cookie name."""
+
+        update_data = {}
+        if persistence_type:
+            update_data = {"session_persistence": {
+                "type": persistence_type}}
+        if cookie_name:
+            update_data['session_persistence'].update(
+                {"cookie_name": cookie_name})
+        self.pools_client.update_pool(self.pool['id'], **update_data)
+        self.pool = self._wait_for_pool_session_persistence(self.pool['id'],
+                                                            persistence_type)
+        self._wait_for_load_balancer_status(self.load_balancer['id'])
+        if persistence_type:
+            self.assertEqual(persistence_type,
+                             self.pool['session_persistence']['type'])
+        if cookie_name:
+            self.assertEqual(cookie_name,
+                             self.pool['session_persistence']['cookie_name'])
+
+    def _check_cookie_session_persistence(self):
+        """Check cookie persistence types by injecting cookies in requests."""
+
+        # Send first request and get cookie from the server's response
+        cj = http_cookiejar.CookieJar()
+        opener = urllib2.build_opener(urllib2.HTTPCookieProcessor(cj))
+        opener.open("http://{0}/".format(self.vip_ip))
+        resp = []
+        # Send 10 subsequent requests with the cookie inserted in the headers.
+        for count in range(10):
+            request = urllib2.Request("http://{0}/".format(self.vip_ip))
+            cj.add_cookie_header(request)
+            response = urllib2.urlopen(request)
+            resp.append(response.read())
+        self.assertEqual(len(set(resp)), 1, message=resp)
+
+    def copy_file_to_host(self, file_from, dest, host, username, pkey):
+        dest = "%s@%s:%s" % (username, host, dest)
+        cmd = ("scp -v -o UserKnownHostsFile=/dev/null "
+               "-o StrictHostKeyChecking=no "
+               "-i %(pkey)s %(file1)s %(dest)s" % {'pkey': pkey,
+                                                   'file1': file_from,
+                                                   'dest': dest})
+        args = shlex.split(cmd.encode('utf-8'))
+        subprocess_args = {'stdout': subprocess.PIPE,
+                           'stderr': subprocess.STDOUT}
+        proc = subprocess.Popen(args, **subprocess_args)
+        stdout, stderr = proc.communicate()
+        if proc.returncode != 0:
+            LOG.error(("Command {0} returned with exit status {1},"
+                      "output {2}, error {3}").format(cmd, proc.returncode,
+                                                      stdout, stderr))
+        return stdout
+
+    def _is_timed_out(self, start_time, timeout=100):
+        return (time.time() - timeout) > start_time
+
+    @staticmethod
+    def _can_system_poll():
+        return hasattr(select, 'poll')
+
+    def exec_command(self, cmd, encoding="utf-8",
+                     channel_timeout=10, buf_size=1024):
+        """Execute the specified command on the server
+        Note that this method is reading whole command outputs to memory, thus
+        shouldn't be used for large outputs.
+        :param str cmd: Command to run at remote server.
+        :param str encoding: Encoding for result from paramiko.
+                             Result will not be decoded if None.
+        :returns: data read from standard output of the command.
+        :raises: SSHExecCommandFailed if command returns nonzero
+                 status. The exception contains command status stderr content.
+        :raises: TimeoutException if cmd doesn't end when timeout expires.
+        """
+
+        ssh = self.ssh_client._get_ssh_connection()
+        transport = ssh.get_transport()
+        with transport.open_session() as channel:
+            channel.fileno()  # Register event pipe
+            channel.exec_command(cmd)
+            channel.shutdown_write()
+            exit_status = channel.recv_exit_status()
+
+            # If the executing host is linux-based, poll the channel
+            if self._can_system_poll():
+                out_data_chunks = []
+                err_data_chunks = []
+                poll = select.poll()
+                poll.register(channel, select.POLLIN)
+                start_time = time.time()
+
+                while True:
+                    ready = poll.poll(channel_timeout)
+                    if not any(ready):
+                        if not self._is_timed_out(start_time):
+                            continue
+                        raise exceptions.TimeoutException(
+                            "Command: '{0}' executed on host '{1}'.".format(
+                                cmd, self.host))
+                    if not ready[0]:  # If there is nothing to read.
+                        continue
+                    out_chunk = err_chunk = None
+                    if channel.recv_ready():
+                        out_chunk = channel.recv(buf_size)
+                        out_data_chunks += out_chunk,
+                    if channel.recv_stderr_ready():
+                        err_chunk = channel.recv_stderr(buf_size)
+                        err_data_chunks += err_chunk,
+                    if not err_chunk and not out_chunk:
+                        break
+                out_data = b''.join(out_data_chunks)
+                err_data = b''.join(err_data_chunks)
+            # Just read from the channels
+            else:
+                out_file = channel.makefile('rb', buf_size)
+                err_file = channel.makefile_stderr('rb', buf_size)
+                out_data = out_file.read()
+                err_data = err_file.read()
+            if encoding:
+                out_data = out_data.decode(encoding)
+                err_data = err_data.decode(encoding)
+
+            if 0 != exit_status:
+                raise exceptions.SSHExecCommandFailed(
+                    command=cmd, exit_status=exit_status,
+                    stderr=err_data, stdout=out_data)
+            return out_data
