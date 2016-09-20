@@ -18,6 +18,7 @@ import time
 from oslo_log import log as logging
 from tempest.api.network import base
 from tempest import config
+from tempest.lib.common.utils import test_utils
 from tempest.lib import exceptions
 
 from neutron_lbaas._i18n import _, _LI
@@ -26,6 +27,7 @@ from neutron_lbaas.tests.tempest.v2.clients import listeners_client
 from neutron_lbaas.tests.tempest.v2.clients import load_balancers_client
 from neutron_lbaas.tests.tempest.v2.clients import members_client
 from neutron_lbaas.tests.tempest.v2.clients import pools_client
+import time
 
 CONF = config.CONF
 
@@ -90,23 +92,33 @@ class BaseTestCase(base.BaseNetworkTest):
                 for pool in listener.get('pools'):
                     hm = pool.get('healthmonitor')
                     if hm:
-                        cls._try_delete_resource(
+                        test_utils.call_and_ignore_notfound_exc(
                             cls.health_monitors_client.delete_health_monitor,
                             pool.get('healthmonitor').get('id'))
                         cls._wait_for_load_balancer_status(lb_id)
-                    cls._try_delete_resource(cls.pools_client.delete_pool,
-                                             pool.get('id'))
+                    test_utils.call_and_ignore_notfound_exc(
+                        cls.pools_client.delete_pool,
+                        pool.get('id'))
                     cls._wait_for_load_balancer_status(lb_id)
-                    health_monitor = pool.get('healthmonitor')
-                    if health_monitor:
-                        cls._try_delete_resource(
-                            cls.health_monitors_client.delete_health_monitor,
-                            health_monitor.get('id'))
+                    # delete pool's members
+                    members = pool.get('members', [])
+                    for member in members:
+                        test_utils.call_and_ignore_notfound_exc(
+                            cls.members_client.delete_member,
+                            pool.get('id'), member.get('id'))
+                        cls._wait_for_load_balancer_status(lb_id)
+                    # delete pool
+                    test_utils.call_and_ignore_notfound_exc(
+                        cls.pools_client.delete_pool, pool.get('id'))
                     cls._wait_for_load_balancer_status(lb_id)
-                cls._try_delete_resource(cls.listeners_client.delete_listener,
-                                         listener.get('id'))
+                # delete listener
+                test_utils.call_and_ignore_notfound_exc(
+                    cls.listeners_client.delete_listener,
+                    listener.get('id'))
                 cls._wait_for_load_balancer_status(lb_id)
-            cls._try_delete_resource(cls._delete_load_balancer, lb_id)
+            # delete load-balancer
+            test_utils.call_and_ignore_notfound_exc(
+                cls._delete_load_balancer, lb_id)
 
         super(BaseTestCase, cls).resource_cleanup()
 
