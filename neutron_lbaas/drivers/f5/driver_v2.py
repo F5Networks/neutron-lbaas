@@ -38,8 +38,6 @@ class F5LBaaSV2Driver(driver_base.LoadBalancerBaseDriver):
         self.pool = PoolManager(self)
         self.member = MemberManager(self)
         self.health_monitor = HealthMonitorManager(self)
-        self.l7policy = L7PolicyManager(self)
-        self.l7rule = L7RuleManager(self)
 
         if not env:
             msg = "F5LBaaSV2Driver cannot be intialized because the environment"\
@@ -139,25 +137,3 @@ class HealthMonitorManager(driver_base.BaseHealthMonitorManager):
 
     def delete(self, context, health_monitor):
         self.driver.f5.healthmonitor.delete(context, health_monitor)
-
-class L7PolicyManager(driver_base.BaseL7PolicyManager):
-
-    def create(self, context, l7policy):
-        self.driver.f5.l7policy.create(context, l7policy)
-
-    def update(self, context, old_l7policy, l7policy):
-        self.driver.f5.l7policy.update(context, old_l7policy, l7policy)
-
-    def delete(self, context, l7policy):
-        self.driver.f5.l7policy.delete(context, l7policy)
-
-class L7RuleManager(driver_base.BaseL7RuleManager):
-
-    def create(self, context, l7rule):
-        self.driver.f5.l7rule.create(context, l7rule)
-
-    def update(self, context, old_l7rule, l7rule):
-        self.driver.f5.l7rule.update(context, old_l7rule, l7rule)
-
-    def delete(self, context, l7rule):
-        self.driver.f5.l7rule.delete(context, l7rule)
