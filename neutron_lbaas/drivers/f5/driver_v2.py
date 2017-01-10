@@ -14,9 +14,11 @@
 #
 
 import f5lbaasdriver
+from f5lbaasdriver.v2.bigip.driver_v2 import F5DriverV2
+
+from oslo_log import log as logging
 
 from neutron_lbaas.drivers import driver_base
-from oslo_log import log as logging
 
 VERSION = "0.1.1"
 LOG = logging.getLogger(__name__)
@@ -37,10 +39,18 @@ class F5LBaaSV2Driver(driver_base.LoadBalancerBaseDriver):
         self.member = MemberManager(self)
         self.health_monitor = HealthMonitorManager(self)
 
+        if not env:
+            msg = "F5LBaaSV2Driver cannot be intialized because the environment"\
+                " is not defined. To set the environment, edit "\
+                "neutron_lbaas.conf and append the environment name to the "\
+                "service_provider class name."
+            LOG.debug(msg)
+            raise UndefinedEnvironment(msg)
+
         LOG.debug("F5LBaaSV2Driver: initializing, version=%s, impl=%s, env=%s"
                   % (VERSION, f5lbaasdriver.__version__, env))
 
-        self.f5 = f5lbaasdriver.v2.bigip.driver_v2.F5DriverV2(plugin, env)
+        self.f5 = F5DriverV2(plugin, env)
 
 
 class F5LBaaSV2DriverTest(F5LBaaSV2Driver):
@@ -51,7 +61,6 @@ class F5LBaaSV2DriverTest(F5LBaaSV2Driver):
         LOG.debug(
             "F5LBaaSV2DriverTest: initializing, version=%s, f5=%s, env=%s"
             % (VERSION, f5lbaasdriver.__version__, env))
-
 
 class F5LBaaSV2DriverProject(F5LBaaSV2Driver):
 
