@@ -520,12 +520,20 @@ class BaseTestCase(manager.NetworkScenarioTest):
         for member, counter in six.iteritems(counters):
             self.assertGreater(counter, 0, 'Member %s never balanced' % member)
 
+    def _create_unverified_ssl_context(self):
+        ctx = ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+        return ctx
+
     def _check_connection(self, check_ip, protocol='http', port=80):
         #ssl.PROTOCOL_SSLv23 = ssl.PROTOCOL_TLSv1
         #context = ssl._create_unverified_context
         #default_context = ssl._create_default_https_context
 
         def try_connect(check_ip, protocol, port):
+            # Bypass cert verification
+            ctx = self._create_unverified_ssl_context()
             requests.packages.urllib3.disable_warnings()
             #print check_ip
             #url = "{0}://{1}:{2}/".format(protocol, check_ip, port)
@@ -536,9 +544,9 @@ class BaseTestCase(manager.NetworkScenarioTest):
 
                 resp = urllib2.urlopen("{0}://{1}:{2}/".format(protocol,
                                                             check_ip,
-                                                            port))
-                print resp.status_code
-                if resp.status_code == 200 :
+                                                            port), context=ctx)
+                print resp.getcode()
+                if resp.getcode() == 200 :
                     return True
                 return False
             except IOError:
@@ -557,8 +565,9 @@ class BaseTestCase(manager.NetworkScenarioTest):
         counters = dict.fromkeys(servers, 0)
         for i in range(self.num):
             try:
+                ctx = self._create_unverified_ssl_context()
                 server = urllib2.urlopen("{0}://{1}/".format(
-                    protocol, vip_ip), None, 2).read()
+                    protocol, vip_ip), None, 2, context=ctx).read()
                 counters[server] += 1
             # HTTP exception means fail of server, so don't increase counter
             # of success and continue connection tries

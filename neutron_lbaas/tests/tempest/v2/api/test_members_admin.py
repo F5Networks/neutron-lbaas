@@ -64,7 +64,7 @@ class MemberTestJSON(base.BaseAdminTestCase):
     def test_create_member_invalid_tenant_id(self):
         """Test create member with invalid tenant_id"""
         member_opts = {}
-        member_opts['address'] = "127.0.0.1"
+        member_opts['address'] = "128.0.0.1"
         member_opts['protocol_port'] = 80
         member_opts['subnet_id'] = self.subnet_id
         member_opts['tenant_id'] = "$232!$pw"
@@ -77,7 +77,7 @@ class MemberTestJSON(base.BaseAdminTestCase):
     def test_create_member_empty_tenant_id(self):
         """Test create member with an empty tenant_id should fail"""
         member_opts = {}
-        member_opts['address'] = "127.0.0.1"
+        member_opts['address'] = "128.0.0.1"
         member_opts['protocol_port'] = 80
         member_opts['subnet_id'] = self.subnet_id
         member_opts['tenant_id'] = ""
