@@ -174,7 +174,7 @@ class BaseTestCase(base.BaseNetworkTest):
                                        operating_status='ONLINE',
                                        delete=False):
         interval_time = 1
-        timeout = 600
+        timeout = 60
         end_time = time.time() + timeout
         lb = {}
         while time.time() < end_time:
