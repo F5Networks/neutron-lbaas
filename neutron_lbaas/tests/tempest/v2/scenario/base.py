@@ -72,6 +72,7 @@ class BaseTestCase(manager.NetworkScenarioTest):
 
     def setUp(self):
         super(BaseTestCase, self).setUp()
+        self.tenant_id = self.manager.identity_client.tenant_id
         self.servers_keypairs = {}
         self.servers = {}
         self.members = []
