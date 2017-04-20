@@ -315,7 +315,8 @@ class HaproxyNSDriver(agent_device_driver.AgentDeviceDriver):
                 port.id,
                 interface_name,
                 port.mac_address,
-                namespace=namespace
+                namespace=namespace,
+                mtu=port.network.mtu
             )
 
         cidrs = [
@@ -331,10 +332,18 @@ class HaproxyNSDriver(agent_device_driver.AgentDeviceDriver):
             device = ip_lib.IPDevice(interface_name, namespace=namespace)
             device.addr.wait_until_address_ready(vip_address)
 
+        # Add subnet host routes
+        host_routes = port.fixed_ips[0].subnet.host_routes
+        for host_route in host_routes:
+            if host_route.destination != "0.0.0.0/0":
+                cmd = ['route', 'add', '-net', host_route.destination,
+                       'gw', host_route.nexthop]
+                ip_wrapper = ip_lib.IPWrapper(namespace=namespace)
+                ip_wrapper.netns.execute(cmd, check_exit_code=False)
+
         gw_ip = port.fixed_ips[0].subnet.gateway_ip
 
         if not gw_ip:
-            host_routes = port.fixed_ips[0].subnet.host_routes
             for host_route in host_routes:
                 if host_route.destination == "0.0.0.0/0":
                     gw_ip = host_route.nexthop
@@ -435,7 +444,8 @@ class ListenerManager(agent_device_driver.BaseListenerManager):
         else:
             # undeploy instance because haproxy will throw error if port is
             # missing in frontend
-            self.driver.undeploy_instance(loadbalancer.id)
+            self.driver.undeploy_instance(loadbalancer.id,
+                                          delete_namespace=True)
 
 
 class PoolManager(agent_device_driver.BasePoolManager):
