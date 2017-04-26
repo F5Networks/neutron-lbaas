@@ -122,15 +122,18 @@ class BaseTestCase(manager.NetworkScenarioTest):
         fallback in absence of tenant networking.
         """
         try:
-            tenant_net = self._list_networks(tenant_id=self.tenant_id)[0]
+            tenant_net = self.admin_manager.networks_client.list_networks(
+                tenant_id=self.tenant_id)['networks'][0]
         except IndexError:
             tenant_net = None
 
         if tenant_net:
-            self.subnet = self._list_subnets(tenant_id=self.tenant_id)[0]
-            self.addCleanup(test_utils.call_and_ignore_notfound_exc,
-                            self.networks_client.delete_network,
-                            self.subnet['id'])
+            tenant_subnet = self.admin_manager.subnets_client.list_subnets(
+                tenant_id=self.tenant_id)['subnets'][0]
+            self.subnet = net_resources.DeletableSubnet(
+                subnets_client=self.subnets_client,
+                routers_client=self.routers_client,
+                **tenant_subnet)
             self.network = tenant_net
         else:
             self.network = self._get_network_by_name(
@@ -139,8 +142,9 @@ class BaseTestCase(manager.NetworkScenarioTest):
             # with the fixed network is the one we want.  In the future, we
             # should instead pull a subnet id from config, which is set by
             # devstack/admin/etc.
-            subnet = self._list_subnets(network_id=self.network['id'])[0]
-            self.subnet = subnet
+            subnet = self.admin_manager.subnets_client.list_subnets(
+                network_id=self.network['id'])['subnets'][0]
+            self.subnet = net_resources.AttributeDict(subnet)
 
     def _create_security_group_for_test(self):
         self.security_group = self._create_security_group(
