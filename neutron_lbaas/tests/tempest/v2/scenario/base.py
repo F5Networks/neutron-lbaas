@@ -32,9 +32,9 @@ from tempest import exceptions
 from tempest.lib import exceptions as lib_exc
 from tempest.scenario import manager
 from tempest import test
-from tempest.lib.common.utils import test_utils
 import requests
 
+from tempest.scenario import network_resources as net_resources
 from neutron_lbaas._i18n import _
 from neutron_lbaas.tests.tempest.v2.clients import health_monitors_client
 from neutron_lbaas.tests.tempest.v2.clients import listeners_client
@@ -122,15 +122,18 @@ class BaseTestCase(manager.NetworkScenarioTest):
         fallback in absence of tenant networking.
         """
         try:
-            tenant_net = self._list_networks(tenant_id=self.tenant_id)[0]
+            tenant_net = self.admin_manager.networks_client.list_networks(
+                tenant_id=self.tenant_id)['networks'][0]
         except IndexError:
             tenant_net = None
 
         if tenant_net:
-            self.subnet = self._list_subnets(tenant_id=self.tenant_id)[0]
-            self.addCleanup(test_utils.call_and_ignore_notfound_exc,
-                            self.networks_client.delete_network,
-                            self.subnet['id'])
+            tenant_subnet = self.admin_manager.subnets_client.list_subnets(
+                tenant_id=self.tenant_id)['subnets'][0]
+            self.subnet = net_resources.DeletableSubnet(
+                subnets_client=self.subnets_client,
+                routers_client=self.routers_client,
+                **tenant_subnet)
             self.network = tenant_net
         else:
             self.network = self._get_network_by_name(
@@ -139,8 +142,9 @@ class BaseTestCase(manager.NetworkScenarioTest):
             # with the fixed network is the one we want.  In the future, we
             # should instead pull a subnet id from config, which is set by
             # devstack/admin/etc.
-            subnet = self._list_subnets(network_id=self.network['id'])[0]
-            self.subnet = subnet
+            subnet = self.admin_manager.subnets_client.list_subnets(
+                network_id=self.network['id'])['subnets'][0]
+            self.subnet = net_resources.AttributeDict(subnet)
 
     def _create_security_group_for_test(self):
         self.security_group = self._create_security_group(
@@ -329,28 +333,25 @@ class BaseTestCase(manager.NetworkScenarioTest):
                         load_balancer_id=self.load_balancer['id'])
         return self.pool
 
+
     def _cleanup_load_balancer(self, load_balancer_id):
-        test_utils.call_and_ignore_notfound_exc(
-            self.load_balancers_client.delete_load_balancer, load_balancer_id)
-#        self.delete_wrapper(self.load_balancers_client.delete_load_balancer,
-#                            load_balancer_id)
+        self.delete_wrapper(self.load_balancers_client.delete_load_balancer,
+                            load_balancer_id)
         self._wait_for_load_balancer_status(load_balancer_id, delete=True)
 
     def _cleanup_listener(self, listener_id, load_balancer_id=None):
-        test_utils.call_and_ignore_notfound_exc(
-            self.listeners_client.delete_listener, listener_id)
+        self.delete_wrapper(self.listeners_client.delete_listener, listener_id)
         if load_balancer_id:
             self._wait_for_load_balancer_status(load_balancer_id)
 
     def _cleanup_pool(self, pool_id, load_balancer_id=None):
-        test_utils.call_and_ignore_notfound_exc(
-            self.pools_client.delete_pool, pool_id)
+        self.delete_wrapper(self.pools_client.delete_pool, pool_id)
         if load_balancer_id:
             self._wait_for_load_balancer_status(load_balancer_id)
 
     def _cleanup_health_monitor(self, hm_id, load_balancer_id=None):
-        test_utils.call_and_ignore_notfound_exc(
-            self.health_monitors_client.delete_health_monitor, hm_id)
+        self.delete_wrapper(self.health_monitors_client.delete_health_monitor,
+                            hm_id)
         if load_balancer_id:
             self._wait_for_load_balancer_status(load_balancer_id)
 

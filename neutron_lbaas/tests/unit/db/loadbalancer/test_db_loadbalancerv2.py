@@ -37,6 +37,7 @@ from neutron import manager
 from neutron_lbaas._i18n import _
 from neutron_lbaas.common.cert_manager import cert_manager
 from neutron_lbaas.common import exceptions
+from neutron_lbaas.db.loadbalancer import loadbalancer_dbv2
 from neutron_lbaas.db.loadbalancer import models
 from neutron_lbaas.drivers.logging_noop import driver as noop_driver
 import neutron_lbaas.extensions
@@ -640,6 +641,20 @@ class LbaasPluginDbTestCase(LbaasTestMixin, base.NeutronDbPluginV2TestCase):
                 hm_status = pool_statuses['healthmonitor']
                 self.assertEqual(constants.ACTIVE,
                                  hm_status['provisioning_status'])
+
+    def test_assert_modification_allowed(self):
+        mock_lb = mock.MagicMock()
+        mock_lb.provisioning_status = constants.PENDING_UPDATE
+        mock_lb.id = uuidutils.generate_uuid()
+        LBPluginDBv2 = loadbalancer_dbv2.LoadBalancerPluginDbv2()
+
+        self.assertRaises(
+            loadbalancerv2.StateInvalid,
+            LBPluginDBv2.assert_modification_allowed, mock_lb)
+        # Check that this is a sub-exception of conflict to return 409
+        self.assertRaises(
+            n_exc.Conflict,
+            LBPluginDBv2.assert_modification_allowed, mock_lb)
 
 
 class LbaasLoadBalancerTests(LbaasPluginDbTestCase):
@@ -3696,6 +3711,26 @@ class LbaasStatusesTest(MemberTestBase):
         #Verify siblings are not degraded
         self._assertNotDegraded(self._traverse_statuses(statuses,
             listener='listener_HTTPS', pool='pool_HTTPS'))
+        self._assertNotDegraded(self._traverse_statuses(statuses,
+            listener='listener_HTTPS'))
+
+    def test_degraded_with_pool_error(self):
+        ctx = context.get_admin_context()
+        ERROR = constants.ERROR
+        lb_dict = self._create_new_populated_loadbalancer()
+        lb_id = lb_dict['id']
+        statuses = self._get_loadbalancer_statuses_api(lb_id)[1]
+        stat = self._traverse_statuses(statuses, listener="listener_HTTP",
+                                       pool="pool_HTTP")
+        pool_id = stat['id']
+        self.plugin.db.update_status(ctx, models.PoolV2, pool_id,
+                                     provisioning_status=ERROR)
+        statuses = self._get_loadbalancer_statuses_api(lb_id)[1]
+        #Assert the parents of the pool are degraded
+        self._assertDegraded(self._traverse_statuses(statuses,
+                                                    listener='listener_HTTP'))
+        self._assertDegraded(self._traverse_statuses(statuses))
+        #Verify siblings are not degraded
         self._assertNotDegraded(self._traverse_statuses(statuses,
             listener='listener_HTTPS'))
 
