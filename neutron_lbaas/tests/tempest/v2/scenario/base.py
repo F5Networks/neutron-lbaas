@@ -618,6 +618,11 @@ class BaseTestCase(manager.NetworkScenarioTest):
         if persistence_type:
             update_data = {"session_persistence": {
                 "type": persistence_type}}
+        else:
+            # If persistence_type is None, as it is by default, we should
+            # update the pool update_data dict to have session_persistence
+            # as None.
+            update_data = {'session_persistence': None}
         if cookie_name:
             update_data['session_persistence'].update(
                 {"cookie_name": cookie_name})
