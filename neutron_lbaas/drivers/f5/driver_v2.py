@@ -20,7 +20,7 @@ from oslo_log import log as logging
 
 from neutron_lbaas.drivers import driver_base
 
-VERSION = "9.1.0"
+VERSION = "10.0.0"
 LOG = logging.getLogger(__name__)
 
 
