@@ -74,7 +74,7 @@ class MemberTestJSON(base.BaseTestCase):
     @test.attr(type='smoke')
     def test_list_3_members(self):
         """Test that we can list members. """
-        member_ips_exp = set([u"127.0.0.0", u"127.0.0.1", u"127.0.0.2"])
+        member_ips_exp = set([u"128.0.0.0", u"128.0.0.1", u"128.0.0.2"])
         for ip in member_ips_exp:
             member_opts = self.build_member_opts()
             member_opts["address"] = ip
@@ -126,7 +126,7 @@ class MemberTestJSON(base.BaseTestCase):
         missing
         """
         member_opts = {}
-        member_opts['address'] = "127.0.0.1"
+        member_opts['address'] = "128.0.0.1"
         member_opts['protocol_port'] = 80
         member_opts['subnet_id'] = self.subnet_id
         member = self._create_member(self.pool_id, **member_opts)
@@ -145,7 +145,7 @@ class MemberTestJSON(base.BaseTestCase):
     def test_create_member_missing_required_field_protocol_port(self):
         """Test create a member with missing field protocol_port"""
         member_opts = {}
-        member_opts['address'] = "127.0.0.1"
+        member_opts['address'] = "128.0.0.1"
         member_opts['subnet_id'] = self.subnet_id
         self.assertRaises(ex.BadRequest, self._create_member,
                           self.pool_id, **member_opts)
@@ -155,7 +155,7 @@ class MemberTestJSON(base.BaseTestCase):
         """Test create a member with missing field subnet_id """
         member_opts = {}
         member_opts['protocol_port'] = 80
-        member_opts['address'] = "127.0.0.1"
+        member_opts['address'] = "128.0.0.1"
         self.assertRaises(ex.BadRequest, self._create_member,
                           self.pool_id, **member_opts)
 
@@ -170,7 +170,7 @@ class MemberTestJSON(base.BaseTestCase):
     def test_create_member_invalid_tenant_id(self):
         """Test create member with invalid tenant_id"""
         member_opts = {}
-        member_opts['address'] = "127.0.0.1"
+        member_opts['address'] = "128.0.0.1"
         member_opts['protocol_port'] = 80
         member_opts['subnet_id'] = self.subnet_id
         member_opts['tenant_id'] = "$232!$pw"
@@ -191,7 +191,7 @@ class MemberTestJSON(base.BaseTestCase):
     def test_create_member_invalid_protocol_port(self):
         """Test create member with invalid protocol_port"""
         member_opts = {}
-        member_opts['address'] = "127.0.0.1"
+        member_opts['address'] = "128.0.0.1"
         member_opts['protocol_port'] = 8090000
         member_opts['subnet_id'] = self.subnet_id
         self.assertRaises(ex.BadRequest, self._create_member,
@@ -201,7 +201,7 @@ class MemberTestJSON(base.BaseTestCase):
     def test_create_member_invalid_subnet_id(self):
         """Test create member with invalid subnet_id"""
         member_opts = {}
-        member_opts['address'] = "127.0.0.1"
+        member_opts['address'] = "128.0.0.1"
         member_opts['protocol_port'] = 80
         member_opts['subnet_id'] = "45k%^"
         self.assertRaises(ex.BadRequest, self._create_member,
@@ -211,7 +211,7 @@ class MemberTestJSON(base.BaseTestCase):
     def test_create_member_invalid_admin_state_up(self):
         """Test create member with invalid admin_state_up"""
         member_opts = {}
-        member_opts['address'] = "127.0.0.1"
+        member_opts['address'] = "128.0.0.1"
         member_opts['protocol_port'] = 80
         member_opts['subnet_id'] = self.subnet_id
         member_opts['admin_state_up'] = "$232!$pw"
@@ -222,7 +222,7 @@ class MemberTestJSON(base.BaseTestCase):
     def test_create_member_invalid_weight(self):
         """Test create member with invalid weight"""
         member_opts = {}
-        member_opts['address'] = "127.0.0.1"
+        member_opts['address'] = "128.0.0.1"
         member_opts['protocol_port'] = 80
         member_opts['subnet_id'] = self.subnet_id
         member_opts['weight'] = "$232!$pw"
@@ -233,7 +233,7 @@ class MemberTestJSON(base.BaseTestCase):
     def test_create_member_nonint_weight(self):
         """Test create member with nonint weight"""
         member_opts = {}
-        member_opts['address'] = "127.0.0.1"
+        member_opts['address'] = "128.0.0.1"
         member_opts['protocol_port'] = 80
         member_opts['subnet_id'] = self.subnet_id
         member_opts['weight'] = 0.1
@@ -244,7 +244,7 @@ class MemberTestJSON(base.BaseTestCase):
     def test_create_member_empty_tenant_id(self):
         """Test create member with an empty tenant_id"""
         member_opts = {}
-        member_opts['address'] = "127.0.0.1"
+        member_opts['address'] = "128.0.0.1"
         member_opts['protocol_port'] = 80
         member_opts['subnet_id'] = self.subnet_id
         member_opts['tenant_id'] = ""
@@ -265,7 +265,7 @@ class MemberTestJSON(base.BaseTestCase):
     def test_create_member_empty_protocol_port(self):
         """Test create member with an empty protocol_port"""
         member_opts = {}
-        member_opts['address'] = "127.0.0.1"
+        member_opts['address'] = "128.0.0.1"
         member_opts['protocol_port'] = ""
         member_opts['subnet_id'] = self.subnet_id
         self.assertRaises(ex.BadRequest, self._create_member,
@@ -275,7 +275,7 @@ class MemberTestJSON(base.BaseTestCase):
     def test_create_member_empty_subnet_id(self):
         """Test create member with empty subnet_id"""
         member_opts = {}
-        member_opts['address'] = "127.0.0.1"
+        member_opts['address'] = "128.0.0.1"
         member_opts['protocol_port'] = 80
         member_opts['subnet_id'] = ""
         self.assertRaises(ex.BadRequest, self._create_member,
@@ -285,7 +285,7 @@ class MemberTestJSON(base.BaseTestCase):
     def test_create_member_empty_admin_state_up(self):
         """Test create member with an empty admin_state_up"""
         member_opts = {}
-        member_opts['address'] = "127.0.0.1"
+        member_opts['address'] = "128.0.0.1"
         member_opts['protocol_port'] = 80
         member_opts['subnet_id'] = self.subnet_id
         member_opts['admin_state_up'] = ""
@@ -296,7 +296,7 @@ class MemberTestJSON(base.BaseTestCase):
     def test_create_member_empty_weight(self):
         """Test create member with an empty weight"""
         member_opts = {}
-        member_opts['address'] = "127.0.0.1"
+        member_opts['address'] = "128.0.0.1"
         member_opts['protocol_port'] = 80
         member_opts['subnet_id'] = self.subnet_id
         member_opts['weight'] = ""
@@ -457,7 +457,7 @@ class MemberTestJSON(base.BaseTestCase):
     @classmethod
     def build_member_opts(cls, **kw):
         """Build out default member dictionary """
-        opts = {"address": kw.get("address", "127.0.0.1"),
+        opts = {"address": kw.get("address", "128.0.0.1"),
                 "tenant_id": kw.get("tenant_id", cls.tenant_id),
                 "protocol_port": kw.get("protocol_port", 80),
                 "subnet_id": kw.get("subnet_id", cls.subnet_id)}
