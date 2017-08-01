@@ -13,16 +13,18 @@
 #    WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
 #    License for the specific language governing permissions and limitations
 #    under the License.
-import ssl
+from oslo_log import log as logging
+import requests
 import select
 import shlex
+import six
 import socket
+import ssl
 import subprocess
+from tempest.lib.common import ssh
 import tempfile
 import time
-from tempest.lib.common import ssh
-from oslo_log import log as logging
-import six
+
 from six.moves import http_cookiejar
 from six.moves.urllib import error
 from six.moves.urllib import request as urllib2
@@ -31,12 +33,14 @@ from tempest import config
 from tempest import exceptions
 from tempest.lib import exceptions as lib_exc
 from tempest.scenario import manager
-from tempest import test
-import requests
-
 from tempest.scenario import network_resources as net_resources
+from tempest import test
+
+
 from neutron_lbaas._i18n import _
 from neutron_lbaas.tests.tempest.v2.clients import health_monitors_client
+from neutron_lbaas.tests.tempest.v2.clients import l7policy_client
+from neutron_lbaas.tests.tempest.v2.clients import l7rule_client
 from neutron_lbaas.tests.tempest.v2.clients import listeners_client
 from neutron_lbaas.tests.tempest.v2.clients import load_balancers_client
 from neutron_lbaas.tests.tempest.v2.clients import members_client
@@ -101,6 +105,10 @@ class BaseTestCase(manager.NetworkScenarioTest):
         self.health_monitors_client = (
             health_monitors_client.HealthMonitorsClientJSON(
                 *self.client_args))
+        self.l7policy_client = (
+            l7policy_client.L7PolicyClientJSON(*self.client_args))
+        self.l7rule_client = (
+            l7rule_client.L7RuleClientJSON(*self.client_args))
 
     @classmethod
     def skip_checks(cls):
@@ -333,7 +341,6 @@ class BaseTestCase(manager.NetworkScenarioTest):
                         load_balancer_id=self.load_balancer['id'])
         return self.pool
 
-
     def _cleanup_load_balancer(self, load_balancer_id):
         self.delete_wrapper(self.load_balancers_client.delete_load_balancer,
                             load_balancer_id)
@@ -432,7 +439,7 @@ class BaseTestCase(manager.NetworkScenarioTest):
         # tempest.conf file
         if ip_version == 4:
             if (config.network.public_network_id and not
-                        config.network.project_networks_reachable):
+                    config.network.project_networks_reachable):
                 self._assign_floating_ip_to_lb_vip(self.load_balancer)
                 self.vip_ip = self.floating_ips[
                     self.load_balancer['id']][0]['floating_ip_address']
@@ -540,15 +547,11 @@ class BaseTestCase(manager.NetworkScenarioTest):
             #print check_ip
             #url = "{0}://{1}:{2}/".format(protocol, check_ip, port)
             try:
-                #resp = requests.get("{0}://{1}:{2}/".format(protocol,
-                #                                            check_ip,
-                #                                            port), auth=('cirros','cubswin:)'))
-
                 resp = urllib2.urlopen("{0}://{1}:{2}/".format(protocol,
                                                             check_ip,
                                                             port), context=ctx)
-                print resp.getcode()
-                if resp.getcode() == 200 :
+                print(resp.getcode())
+                if resp.getcode() == 200:
                     return True
                 return False
             except IOError:
@@ -560,7 +563,7 @@ class BaseTestCase(manager.NetworkScenarioTest):
         start = time.time()
         while not try_connect(check_ip, protocol, port):
             if (time.time() - start) > timeout:
-                message = "Timed out trying to connect to %s " %check_ip
+                message = "Timed out trying to connect to %s " % check_ip
                 raise exceptions.TimeoutException(message)
 
     def _send_requests(self, vip_ip, servers, protocol='http'):
