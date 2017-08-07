@@ -21,10 +21,13 @@ from tempest import config
 from tempest.lib.common.utils import test_utils
 from tempest.lib import exceptions
 
-from neutron_lbaas._i18n import _, _LI
-from neutron_lbaas.tests.tempest.v2.clients import health_monitors_client
+from neutron_lbaas.tests.tempest.v2.clients import \
+    health_monitors_client
+from neutron_lbaas.tests.tempest.v2.clients import l7policy_client
+from neutron_lbaas.tests.tempest.v2.clients import l7rule_client
 from neutron_lbaas.tests.tempest.v2.clients import listeners_client
-from neutron_lbaas.tests.tempest.v2.clients import load_balancers_client
+from neutron_lbaas.tests.tempest.v2.clients import \
+    load_balancers_client
 from neutron_lbaas.tests.tempest.v2.clients import members_client
 from neutron_lbaas.tests.tempest.v2.clients import pools_client
 
@@ -34,7 +37,7 @@ LOG = logging.getLogger(__name__)
 
 
 def _setup_client_args(auth_provider):
-    """Set up ServiceClient arguments using config settings. """
+    """Set up ServiceClient arguments using config settings."""
     service = CONF.network.catalog_type or 'network'
     region = CONF.network.region or 'regionOne'
     endpoint_type = CONF.network.endpoint_type
@@ -56,13 +59,13 @@ def _setup_client_args(auth_provider):
 
 
 class BaseTestCase(base.BaseNetworkTest):
-
-    # This class picks non-admin credentials and run the tempest tests
+    """This class picks non-admin credentials and run the tempest tests."""
 
     _lbs_to_delete = []
 
     @classmethod
     def resource_setup(cls):
+        """Setup the clients and fixtures for test suite."""
         super(BaseTestCase, cls).resource_setup()
 
         mgr = cls.get_client_manager()
@@ -77,50 +80,119 @@ class BaseTestCase(base.BaseNetworkTest):
         cls.members_client = members_client.MembersClientJSON(*client_args)
         cls.health_monitors_client = (
             health_monitors_client.HealthMonitorsClientJSON(*client_args))
+        cls.l7policy_client = (
+            l7policy_client.L7PolicyClientJSON(*client_args))
+        cls.l7rule_client = (
+            l7rule_client.L7RuleClientJSON(*client_args))
+
+    @classmethod
+    def _cleanup_pool(cls, pool, lb_id):
+        """Remove the members, healthmonitors, and pool."""
+        for member in pool.get('members'):
+            cls._try_delete_resource(
+                cls.members_client.delete_member,
+                pool.get('id'),
+                member.get('id'))
+            cls._wait_for_lb_status_with_modify_expectation(lb_id)
+        hm = pool.get('healthmonitor')
+        if hm:
+            cls._try_delete_resource(
+                cls.health_monitors_client.delete_health_monitor,
+                pool.get('healthmonitor').get('id'))
+            cls._wait_for_lb_status_with_modify_expectation(lb_id)
+        cls._try_delete_resource(cls.pools_client.delete_pool,
+                                 pool.get('id'))
+        cls._wait_for_lb_status_with_modify_expectation(lb_id)
+
+    @classmethod
+    def _cleanup_l7policy(cls, l7policy, lb_id):
+        """Remove the policy and its rules."""
+        for rule in l7policy.get('rules'):
+            cls._try_delete_resource(
+                cls.l7rule_client.delete_l7rule,
+                l7policy.get('id'), rule.get('id'))
+            cls._wait_for_load_balancer_status(lb_id)
+        cls._try_delete_resource(
+            cls.l7policy_client.delete_l7policy,
+            l7policy.get('id'))
+        cls._wait_for_load_balancer_status(lb_id)
+
+    @classmethod
+    def _teardown_lb(cls, lb, lb_id):
+        for listener in lb.get('listeners'):
+            for pool in listener.get('pools'):
+                cls._cleanup_pool(pool, lb_id)
+            for l7policy in listener.get('l7policies', []):
+                cls._cleanup_l7policy(l7policy, lb_id)
+            cls._try_delete_resource(
+                cls.listeners_client.delete_listener,
+                listener.get('id'))
+            cls._wait_for_lb_status_with_modify_expectation(lb_id)
+        # Delete detached pools
+        lb = cls.load_balancers_client.get_load_balancer_status_tree(
+            lb_id).get('loadbalancer')
+        for pool in lb.get('pools'):
+            cls._cleanup_pool(pool, lb_id)
+        cls._try_delete_resource(cls._delete_load_balancer, lb_id)
 
     @classmethod
     def resource_cleanup(cls):
-
+        """Cleanup the remaining objects from the test run."""
+        cls._teardown_exceptions = []
         for lb_id in cls._lbs_to_delete:
             try:
                 lb = cls.load_balancers_client.get_load_balancer_status_tree(
                     lb_id).get('loadbalancer')
+                lb_id = lb.get('id')
             except exceptions.NotFound:
                 continue
-            for listener in lb.get('listeners'):
-                for pool in listener.get('pools'):
-                    # delete pool's health-monitor
-                    hm = pool.get('healthmonitor')
-                    if hm:
-                        test_utils.call_and_ignore_notfound_exc(
-                            cls.health_monitors_client.delete_health_monitor,
-                            pool.get('healthmonitor').get('id'))
-                        cls._wait_for_load_balancer_status(lb_id)
-                    test_utils.call_and_ignore_notfound_exc(
-                        cls.pools_client.delete_pool,
-                        pool.get('id'))
-                    cls._wait_for_load_balancer_status(lb_id)
-                    # delete pool's members
-                    members = pool.get('members', [])
-                    for member in members:
-                        test_utils.call_and_ignore_notfound_exc(
-                            cls.members_client.delete_member,
-                            pool.get('id'), member.get('id'))
-                        cls._wait_for_load_balancer_status(lb_id)
-                    # delete pool
-                    test_utils.call_and_ignore_notfound_exc(
-                        cls.pools_client.delete_pool, pool.get('id'))
-                    cls._wait_for_load_balancer_status(lb_id)
-                # delete listener
-                test_utils.call_and_ignore_notfound_exc(
-                    cls.listeners_client.delete_listener,
-                    listener.get('id'))
-                cls._wait_for_load_balancer_status(lb_id)
-            # delete load-balancer
-            test_utils.call_and_ignore_notfound_exc(
-                cls._delete_load_balancer, lb_id)
+            try:
+                cls._teardown_lb(lb, lb_id)
+            except Exception as ex:
+                try:
+                    # If the previous try failed, let's do it again, but only
+                    # if the provisioning status is not PENDING_UPDATE. That
+                    # would indicate the service is wedged somehow. This can
+                    # help if BadStatusLine or network blip occurred during
+                    # teardown.
+                    lb = cls.load_balancers_client.\
+                        get_load_balancer_status_tree(
+                            lb_id).get('loadbalancer')
+                    if lb.get('provisioning_status') != 'PENDING_UPDATE':
+                        cls._teardown_lb(lb, lb_id)
+                except exceptions.NotFound:
+                    continue
+
+        if cls._teardown_exceptions:
+            print("Teardown exceptions occurred, most likely due to timeout "
+                  "exceptions when checking for loadbalancer status. This "
+                  "will only raise the first error seen. The others will be "
+                  "printed out here.")
+            for ex in cls._teardown_exceptions:
+                print(ex.message)
+            raise ex[0]
 
         super(BaseTestCase, cls).resource_cleanup()
+
+    @classmethod
+    def _try_delete_resource(cls, delete_callable, *args, **kwargs):
+        """Cleanup resources in case of test-failure.
+
+        Some resources are explicitly deleted by the test.
+        If the test failed to delete a resource, this method will execute
+        the appropriate delete methods. Otherwise, the method ignores NotFound
+        exceptions thrown for resources that were correctly deleted by the
+        test.
+
+        :param delete_callable: delete method
+        :param args: arguments for delete method
+        :param kwargs: keyword arguments for delete method
+        """
+        try:
+            delete_callable(*args, **kwargs)
+        # if resource is not found, this means it was deleted in the test
+        except exceptions.NotFound:
+            pass
 
     @classmethod
     def setUpClass(cls):
@@ -128,12 +200,12 @@ class BaseTestCase(base.BaseNetworkTest):
         super(BaseTestCase, cls).setUpClass()
 
     def setUp(cls):
-        cls.LOG.info(_LI('Starting: {0}').format(cls._testMethodName))
+        cls.LOG.info(('Starting: {0}').format(cls._testMethodName))
         super(BaseTestCase, cls).setUp()
 
     def tearDown(cls):
         super(BaseTestCase, cls).tearDown()
-        cls.LOG.info(_LI('Finished: {0}\n').format(cls._testMethodName))
+        cls.LOG.info(('Finished: {0}\n').format(cls._testMethodName))
 
     @classmethod
     def _create_load_balancer(cls, wait=True, **lb_kwargs):
@@ -142,8 +214,6 @@ class BaseTestCase(base.BaseNetworkTest):
             cls._wait_for_load_balancer_status(lb.get('id'))
 
         cls._lbs_to_delete.append(lb.get('id'))
-        port = cls.ports_client.show_port(lb['vip_port_id'])
-        cls.ports.append(port['port'])
         return lb
 
     @classmethod
@@ -169,10 +239,25 @@ class BaseTestCase(base.BaseNetworkTest):
         return lb
 
     @classmethod
+    def _wait_for_lb_status_with_modify_expectation(cls, lb_id):
+        '''Wait for load balancer status, but be able to deal with ERROR'''
+        try:
+            cls._wait_for_load_balancer_status(lb_id)
+        except exceptions.TimeoutException as ex:
+            # Try again, but wait for ERROR status and ignore operating
+            # status, so we can ensure cleanup at all costs
+            cls._teardown_exceptions.append(ex)
+            cls._wait_for_load_balancer_status(
+                lb_id,
+                provisioning_status='ERROR',
+                ignore_operating_status=True)
+
+    @classmethod
     def _wait_for_load_balancer_status(cls, load_balancer_id,
                                        provisioning_status='ACTIVE',
                                        operating_status='ONLINE',
-                                       delete=False):
+                                       delete=False,
+                                       ignore_operating_status=False):
         interval_time = 1
         timeout = 60
         end_time = time.time() + timeout
@@ -187,12 +272,14 @@ class BaseTestCase(base.BaseNetworkTest):
                         break
                     else:
                         raise Exception(
-                            _("loadbalancer {lb_id} not"
-                              " found").format(
-                                  lb_id=load_balancer_id))
-                if (lb.get('provisioning_status') == provisioning_status and
-                        lb.get('operating_status') == operating_status):
-                    break
+                            ("loadbalancer {lb_id} not"
+                             " found").format(
+                                 lb_id=load_balancer_id))
+                if lb.get('provisioning_status') == provisioning_status:
+                    if ignore_operating_status:
+                        break
+                    if lb.get('operating_status') == operating_status:
+                        break
                 time.sleep(interval_time)
             except exceptions.NotFound:
                 # if wait is for delete operation do break
@@ -204,21 +291,21 @@ class BaseTestCase(base.BaseNetworkTest):
         else:
             if delete:
                 raise exceptions.TimeoutException(
-                    _("Waited for load balancer {lb_id} to be deleted for "
-                      "{timeout} seconds but can still observe that it "
-                      "exists.").format(
-                          lb_id=load_balancer_id,
-                          timeout=timeout))
+                    ("Waited for load balancer {lb_id} to be deleted for "
+                     "{timeout} seconds but can still observe that it "
+                     "exists.").format(
+                         lb_id=load_balancer_id,
+                         timeout=timeout))
             else:
                 raise exceptions.TimeoutException(
-                    _("Wait for load balancer ran for {timeout} seconds and "
-                      "did not observe {lb_id} reach {provisioning_status} "
-                      "provisioning status and {operating_status} "
-                      "operating status.").format(
-                          timeout=timeout,
-                          lb_id=load_balancer_id,
-                          provisioning_status=provisioning_status,
-                          operating_status=operating_status))
+                    ("Wait for load balancer ran for {timeout} seconds and "
+                     "did not observe {lb_id} reach {provisioning_status} "
+                     "provisioning status and {operating_status} "
+                     "operating status.").format(
+                         timeout=timeout,
+                         lb_id=load_balancer_id,
+                         provisioning_status=provisioning_status,
+                         operating_status=operating_status))
         return lb
 
     @classmethod
@@ -312,6 +399,51 @@ class BaseTestCase(base.BaseNetworkTest):
         return member
 
     @classmethod
+    def _create_l7policy(cls, wait=True, **l7policy_kwargs):
+        l7policy = cls.l7policy_client.create_l7policy(**l7policy_kwargs)
+        if wait:
+            cls._wait_for_load_balancer_status(cls.load_balancer.get('id'))
+        return l7policy
+
+    @classmethod
+    def _delete_l7policy(cls, l7policy_id, wait=True):
+        cls.l7policy_client.delete_l7policy(l7policy_id)
+        if wait:
+            cls._wait_for_load_balancer_status(cls.load_balancer.get('id'))
+
+    @classmethod
+    def _update_l7policy(cls, l7policy_id, wait=True, **l7policy_kwargs):
+        l7policy = cls.l7policy_client.update_l7policy(
+            l7policy_id, **l7policy_kwargs)
+        if wait:
+            cls._wait_for_load_balancer_status(
+                cls.load_balancer.get('id'))
+        return l7policy
+
+    @classmethod
+    def _create_l7rule(cls, policy_id, wait=True, **l7rule_kwargs):
+        l7rule = cls.l7rule_client.create_l7rule(policy_id, **l7rule_kwargs)
+        if wait:
+            cls._wait_for_load_balancer_status(cls.load_balancer.get('id'))
+        return l7rule
+
+    @classmethod
+    def _delete_l7rule(cls, policy_id, l7rule_id, wait=True):
+        cls.l7rule_client.delete_l7rule(policy_id, l7rule_id)
+        if wait:
+            cls._wait_for_load_balancer_status(cls.load_balancer.get('id'))
+
+    @classmethod
+    def _update_l7rule(
+            cls, l7policy_id, l7rule_id, wait=True, **l7rule_kwargs):
+        l7rule = cls.l7rule_client.update_l7rule(
+            l7policy_id, l7rule_id, **l7rule_kwargs)
+        if wait:
+            cls._wait_for_load_balancer_status(
+                cls.load_balancer.get('id'))
+        return l7rule
+
+    @classmethod
     def _check_status_tree(cls, load_balancer_id, listener_ids=None,
                            pool_ids=None, health_monitor_id=None,
                            member_ids=None):
@@ -362,12 +494,11 @@ class BaseTestCase(base.BaseNetworkTest):
 
 
 class BaseAdminTestCase(BaseTestCase):
-
-    # This class picks admin credentials and run the tempest tests
+    """This class picks admin credentials and run the tempest tests."""
 
     @classmethod
     def resource_setup(cls):
-
+        """Initialize the client objects."""
         super(BaseAdminTestCase, cls).resource_setup()
 
         mgr = cls.get_client_manager(credential_type='admin')
@@ -387,4 +518,5 @@ class BaseAdminTestCase(BaseTestCase):
 
     @classmethod
     def resource_cleanup(cls):
+        """Call BaseTestCase.resource_cleanup."""
         super(BaseAdminTestCase, cls).resource_cleanup()
