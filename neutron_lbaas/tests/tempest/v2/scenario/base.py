@@ -33,6 +33,8 @@ from tempest import test
 
 from neutron_lbaas._i18n import _
 from neutron_lbaas.tests.tempest.v2.clients import health_monitors_client
+from neutron_lbaas.tests.tempest.v2.clients import l7policy_client
+from neutron_lbaas.tests.tempest.v2.clients import l7rule_client
 from neutron_lbaas.tests.tempest.v2.clients import listeners_client
 from neutron_lbaas.tests.tempest.v2.clients import load_balancers_client
 from neutron_lbaas.tests.tempest.v2.clients import members_client
@@ -97,6 +99,10 @@ class BaseTestCase(manager.NetworkScenarioTest):
         self.health_monitors_client = (
             health_monitors_client.HealthMonitorsClientJSON(
                 *self.client_args))
+        self.l7policy_client = (
+                l7policy_client.L7PolicyClientJSON(*self.client_args))
+        self.l7rule_client = (
+                        l7rule_client.L7RuleClientJSON(*self.client_args))
 
     @classmethod
     def skip_checks(cls):
