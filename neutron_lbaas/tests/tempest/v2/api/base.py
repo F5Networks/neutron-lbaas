@@ -171,6 +171,11 @@ class BaseTestCase(base.BaseNetworkTest):
                 print(ex.message)
             raise ex[0]
 
+        # Wait 5 seconds before tearing down network, this will give some time
+        # for the loadbalancer port to be removed.
+        LOG.info("Wait for VIP port teardown")
+        time.sleep(5)
+
         super(BaseTestCase, cls).resource_cleanup()
 
     @classmethod
