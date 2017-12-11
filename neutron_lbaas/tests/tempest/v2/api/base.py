@@ -120,6 +120,11 @@ class BaseTestCase(base.BaseNetworkTest):
             test_utils.call_and_ignore_notfound_exc(
                 cls._delete_load_balancer, lb_id)
 
+        # Wait 5 seconds before tearing down network, this will give some time
+        # for the loadbalancer port to be removed.
+        LOG.info("Wait for VIP port teardown")
+        time.sleep(5)
+
         super(BaseTestCase, cls).resource_cleanup()
 
     @classmethod
