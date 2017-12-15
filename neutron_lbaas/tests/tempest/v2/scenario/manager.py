@@ -15,6 +15,7 @@
 #    under the License.
 
 import subprocess
+import time
 
 import netaddr
 from oslo_log import log
@@ -798,8 +799,18 @@ class NetworkScenarioTest(ScenarioTest):
         return subnet
 
     def _get_server_port_id_and_ip4(self, server, ip_addr=None):
-        ports = self.admin_manager.ports_client.list_ports(
-            device_id=server['id'], fixed_ip=ip_addr)['ports']
+        # - wait for ports to become active
+        max_wait = 10
+        interval = 1
+        duration = 0
+        while duration < max_wait:
+            ports = self.admin_manager.ports_client.list_ports(
+                device_id=server['id'], fixed_ip=ip_addr)['ports']
+            active = [p for p in ports if p['status'] == 'ACTIVE']
+            if len(active) == len(ports):
+                break
+            time.sleep(interval)
+            duration += interval
         # A port can have more than one IP address in some cases.
         # If the network is dual-stack (IPv4 + IPv6), this port is associated
         # with 2 subnets
