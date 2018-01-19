@@ -13,6 +13,8 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 
+import time
+
 from tempest import config
 from tempest.lib.common.utils import data_utils
 from tempest.lib import exceptions as ex
@@ -63,6 +65,10 @@ class MemberTestJSON(base.BaseTestCase):
     @classmethod
     def resource_cleanup(cls):
         super(MemberTestJSON, cls).resource_cleanup()
+
+    def tearDown(self):
+        time.sleep(2)
+        super(MemberTestJSON, self).tearDown()
 
     @test.attr(type='smoke')
     def test_list_empty_members(self):

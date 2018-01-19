@@ -12,6 +12,8 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 
+import time
+
 from tempest.lib.common.utils import data_utils
 from tempest.lib import exceptions as ex
 from tempest import test
@@ -52,6 +54,10 @@ class TestHealthMonitors(base.BaseTestCase):
         cls.create_basic_hm_kwargs = {'type': 'HTTP', 'delay': 3,
                                       'max_retries': 10, 'timeout': 5,
                                       'pool_id': cls.pool.get('id')}
+
+    def tearDown(self):
+        time.sleep(2)
+        super(TestHealthMonitors, self).tearDown()
 
     @test.attr(type='smoke')
     def test_list_health_monitors_empty(self):
