@@ -230,9 +230,15 @@ class BaseTestCase(base.BaseNetworkTest):
     @classmethod
     def _delete_load_balancer(cls, load_balancer_id, wait=True):
         cls.load_balancers_client.delete_load_balancer(load_balancer_id)
+        lb = cls.load_balancers_client.get_load_balancer(load_balancer_id)
+        lb_vip_port_id = lb.get('vip_port_id')
+        LOG.debug("_delete_load_balancer")
         if wait:
             cls._wait_for_load_balancer_status(
                 load_balancer_id, delete=True)
+
+            cls._wait_for_vip_port_delete(
+                lb_vip_port_id)
 
     @classmethod
     def _update_load_balancer(cls, load_balancer_id, wait=True, **lb_kwargs):
@@ -258,6 +264,23 @@ class BaseTestCase(base.BaseNetworkTest):
                 ignore_operating_status=True)
 
     @classmethod
+    def _wait_for_vip_port_delete(cls, port_id):
+        interval_time = 1
+        timeout = 60
+        end_time = time.time() + timeout
+        port = dict()
+
+        while time.time() < end_time:
+            LOG.debug("_wait_for_vip_port_delete: %s" % port_id)
+            time.sleep(interval_time)
+            try:
+                port = cls.ports_client.show_port(port_id)
+                if not port:
+                    break
+            except exceptions.NotFound:
+                break
+
+    @classmethod
     def _wait_for_load_balancer_status(cls, load_balancer_id,
                                        provisioning_status='ACTIVE',
                                        operating_status='ONLINE',
@@ -271,6 +294,7 @@ class BaseTestCase(base.BaseNetworkTest):
             try:
                 lb = cls.load_balancers_client.get_load_balancer(
                     load_balancer_id)
+                LOG.debug("_wait_for_load_balancer_status: %s", lb)
                 if not lb:
                         # loadbalancer not found
                     if delete:
@@ -322,9 +346,25 @@ class BaseTestCase(base.BaseNetworkTest):
 
     @classmethod
     def _delete_listener(cls, listener_id, wait=True):
+        interval_time = 1
+        timeout = 10
+        end_time = time.time() + timeout
+        listener = {}
+        lb_id = cls.load_balancer.get('id')
         cls.listeners_client.delete_listener(listener_id)
+
         if wait:
-            cls._wait_for_load_balancer_status(cls.load_balancer.get('id'))
+            while time.time() < end_time:
+                try:
+                    listener = cls.listeners_client.get_listener(
+                        listener_id)
+                    if not listener:
+                        break
+                except exceptions.NotFound:
+                    break
+                time.sleep(interval_time)
+
+            cls._wait_for_load_balancer_status(lb_id)
 
     @classmethod
     def _update_listener(cls, listener_id, wait=True, **listener_kwargs):
@@ -344,8 +384,23 @@ class BaseTestCase(base.BaseNetworkTest):
 
     @classmethod
     def _delete_pool(cls, pool_id, wait=True):
+        interval_time = 1
+        timeout = 10
+        end_time = time.time() + timeout
+        pool = {}
+
         cls.pools_client.delete_pool(pool_id)
         if wait:
+            while time.time() < end_time:
+                try:
+                    pool = cls.pools_client.get_pool(
+                        pool_id)
+                    if not pool:
+                        break
+                except exceptions.NotFound:
+                    break
+                time.sleep(interval_time)
+
             cls._wait_for_load_balancer_status(cls.load_balancer.get('id'))
 
     @classmethod
