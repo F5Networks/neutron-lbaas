@@ -42,6 +42,17 @@ class LoadBalancersClientJSON(rest_client.RestClient):
         self.expected_success(200, resp.status)
         return rest_client.ResponseBody(resp, body['loadbalancer'])
 
+    def get_load_balancer_hosting_agent(self, load_balancer_id, params=None):
+        """Get load balancer details."""
+        url = 'v2.0/lbaas/loadbalancers/{0}/loadbalancer-hosting-agent.json'.format(
+            load_balancer_id)
+        if params:
+            url = '{0}?{1}'.format(url, parse.urlencode(params))
+        resp, body = self.get(url)
+        body = jsonutils.loads(body)
+        self.expected_success(200, resp.status)
+        return rest_client.ResponseBody(resp, body['agent'])
+
     def create_load_balancer(self, **kwargs):
         """Create a load balancer build."""
         post_body = jsonutils.dumps({'loadbalancer': kwargs})
