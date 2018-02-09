@@ -18,7 +18,7 @@ from tempest import config
 from tempest.lib.common.utils import data_utils
 from tempest.lib import exceptions as ex
 from tempest import test
-
+import pytest
 from neutron_lbaas.tests.tempest.v2.api import base
 
 CONF = config.CONF
@@ -52,6 +52,7 @@ class LoadBalancersTestJSON(base.BaseAdminTestCase):
             cls._create_active_load_balancer(**cls.create_lb_kwargs)
         cls.load_balancer_id = cls.load_balancer['id']
 
+    @pytest.mark.skip(reason="The network setting for the test doesn't work with our env")
     @test.attr(type='smoke')
     def test_create_load_balancer_missing_tenant_id_field_for_admin(self):
         """
@@ -68,6 +69,7 @@ class LoadBalancersTestJSON(base.BaseAdminTestCase):
                          admin_lb.get('tenant_id'))
         self._wait_for_load_balancer_status(load_balancer['id'])
 
+    @pytest.mark.skip(reason="The network setting for the test doesn't work with our env")
     @test.attr(type='smoke')
     def test_create_load_balancer_missing_tenant_id_for_other_tenant(self):
         """
@@ -91,6 +93,7 @@ class LoadBalancersTestJSON(base.BaseAdminTestCase):
                           wait=False,
                           tenant_id="")
 
+    @pytest.mark.skip(reason="The network setting for the test doesn't work with our env")
     @test.attr(type='smoke')
     def test_create_load_balancer_for_another_tenant(self):
         """Test create load balancer for other tenant"""
